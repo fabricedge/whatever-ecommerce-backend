@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/dev.ts",
     "build": "tsx src/index.ts",
     "start": "node src/index.js",
     "db:generate": "prisma generate",
@@ -12,9 +12,11 @@
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@hono/node-server": "^2.0.4",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "bcryptjs": "^3.0.3",
+    "dotenv": "17.4.2",
     "hono": "^4.7.7",
     "jose": "^6.0.10",
     "prisma": "^7.8.0",

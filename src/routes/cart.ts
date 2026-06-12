@@ -1,12 +1,12 @@
 import { Hono } from "hono"
-import { prisma } from "../lib/prisma.js"
+import { getPrisma } from "../lib/prisma.js"
 import { authMiddleware, getUser } from "../lib/auth-middleware.js"
 
 const cart = new Hono()
 
 cart.get("/", authMiddleware, async (c) => {
   const user = getUser(c)
-  const cartItems = await prisma.cartItem.findMany({
+  const cartItems = await getPrisma().cartItem.findMany({
     where: { userId: user.userId },
     include: { product: true },
     orderBy: { product: { name: "asc" } },
@@ -18,19 +18,19 @@ cart.post("/", authMiddleware, async (c) => {
   const user = getUser(c)
   const { productId, quantity = 1 } = await c.req.json()
 
-  const existing = await prisma.cartItem.findUnique({
+  const existing = await getPrisma().cartItem.findUnique({
     where: { userId_productId: { userId: user.userId, productId } },
   })
 
   if (existing) {
-    const cartItem = await prisma.cartItem.update({
+    const cartItem = await getPrisma().cartItem.update({
       where: { id: existing.id },
       data: { quantity: existing.quantity + quantity },
     })
     return c.json(cartItem)
   }
 
-  const cartItem = await prisma.cartItem.create({
+  const cartItem = await getPrisma().cartItem.create({
     data: { userId: user.userId, productId, quantity },
   })
 
@@ -42,12 +42,12 @@ cart.patch("/:itemId", authMiddleware, async (c) => {
   const itemId = c.req.param("itemId")
   const { quantity } = await c.req.json()
 
-  const cartItem = await prisma.cartItem.findFirst({
+  const cartItem = await getPrisma().cartItem.findFirst({
     where: { id: itemId, userId: user.userId },
   })
   if (!cartItem) return c.json({ error: "Not found" }, 404)
 
-  const updated = await prisma.cartItem.update({
+  const updated = await getPrisma().cartItem.update({
     where: { id: itemId },
     data: { quantity },
   })
@@ -58,12 +58,12 @@ cart.delete("/:itemId", authMiddleware, async (c) => {
   const user = getUser(c)
   const itemId = c.req.param("itemId")
 
-  const cartItem = await prisma.cartItem.findFirst({
+  const cartItem = await getPrisma().cartItem.findFirst({
     where: { id: itemId, userId: user.userId },
   })
   if (!cartItem) return c.json({ error: "Not found" }, 404)
 
-  await prisma.cartItem.delete({ where: { id: itemId } })
+  await getPrisma().cartItem.delete({ where: { id: itemId } })
   return c.json({ success: true })
 })
 

@@ -1,6 +1,6 @@
 import { Hono } from "hono"
 import { getStripe } from "../lib/stripe.js"
-import { prisma } from "../lib/prisma.js"
+import { getPrisma } from "../lib/prisma.js"
 
 const webhooks = new Hono()
 
@@ -20,16 +20,16 @@ webhooks.post("/stripe", async (c) => {
     const orderId = paymentIntent.metadata.orderId
 
     if (orderId) {
-      const order = await prisma.order.findUnique({ where: { id: orderId } })
+      const order = await getPrisma().order.findUnique({ where: { id: orderId } })
       if (order && order.status === "PENDING") {
-        await prisma.order.update({
+        await getPrisma().order.update({
           where: { id: orderId },
           data: { status: "PAID" },
         })
 
-        const items = await prisma.orderItem.findMany({ where: { orderId } })
+        const items = await getPrisma().orderItem.findMany({ where: { orderId } })
         for (const item of items) {
-          await prisma.product.update({
+          await getPrisma().product.update({
             where: { id: item.productId },
             data: { inventory: { decrement: item.quantity } },
           })

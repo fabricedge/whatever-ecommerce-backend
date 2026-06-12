@@ -1,5 +1,5 @@
 import { Hono } from "hono"
-import { prisma } from "../lib/prisma.js"
+import { getPrisma } from "../lib/prisma.js"
 import { authMiddleware, getUser } from "../lib/auth-middleware.js"
 
 const orders = new Hono()
@@ -7,7 +7,7 @@ const orders = new Hono()
 orders.get("/", authMiddleware, async (c) => {
   const user = getUser(c)
 
-  const orderList = await prisma.order.findMany({
+  const orderList = await getPrisma().order.findMany({
     where: { userId: user.userId },
     include: { items: { include: { product: true } } },
     orderBy: { createdAt: "desc" },
@@ -26,14 +26,14 @@ orders.get("/admin", authMiddleware, async (c) => {
   const where = query.status && query.status !== "ALL" ? { status: query.status as any } : {}
 
   const [orderList, count] = await Promise.all([
-    prisma.order.findMany({
+    getPrisma().order.findMany({
       where,
       include: { items: { include: { product: true } }, user: true },
       orderBy: { createdAt: "desc" },
       take: limit,
       skip: (page - 1) * limit,
     }),
-    prisma.order.count({ where }),
+    getPrisma().order.count({ where }),
   ])
 
   return c.json({ orders: orderList, count, pages: Math.ceil(count / limit) })
@@ -46,7 +46,7 @@ orders.get("/:id", authMiddleware, async (c) => {
   const where: any = { id }
   if (user.role !== "ADMIN") where.userId = user.userId
 
-  const order = await prisma.order.findUnique({
+  const order = await getPrisma().order.findUnique({
     where: { id },
     include: { items: { include: { product: true } }, user: true },
   })

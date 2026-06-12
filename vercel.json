@@ -1,13 +1,13 @@
 {
-  "buildCommand": "npm run db:generate",
-  "outputDirectory": ".",
+  "buildCommand": "npx prisma generate",
+  "installCommand": "npm install",
   "functions": {
-    "src/index.ts": {
+    "api/index.ts": {
       "memory": 256,
       "maxDuration": 30
     }
   },
   "rewrites": [
-    { "source": "/(.*)", "destination": "/src/index.ts" }
+    { "source": "/(.*)", "destination": "/api/index.ts" }
   ]
 }

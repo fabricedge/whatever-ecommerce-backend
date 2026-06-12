@@ -1,5 +1,5 @@
 import { Hono } from "hono"
-import { prisma } from "../lib/prisma.js"
+import { getPrisma } from "../lib/prisma.js"
 import { getStripe } from "../lib/stripe.js"
 import { authMiddleware, getUser } from "../lib/auth-middleware.js"
 
@@ -8,7 +8,7 @@ const checkout = new Hono()
 checkout.post("/", authMiddleware, async (c) => {
   const user = getUser(c)
 
-  const cartItems = await prisma.cartItem.findMany({
+  const cartItems = await getPrisma().cartItem.findMany({
     where: { userId: user.userId },
     include: { product: true },
   })
@@ -19,7 +19,7 @@ checkout.post("/", authMiddleware, async (c) => {
 
   const total = cartItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0)
 
-  const order = await prisma.order.create({
+  const order = await getPrisma().order.create({
     data: {
       userId: user.userId,
       total,
@@ -41,12 +41,12 @@ checkout.post("/", authMiddleware, async (c) => {
     automatic_payment_methods: { enabled: true },
   })
 
-  await prisma.order.update({
+  await getPrisma().order.update({
     where: { id: order.id },
     data: { stripePaymentIntentId: paymentIntent.id },
   })
 
-  await prisma.cartItem.deleteMany({ where: { userId: user.userId } })
+  await getPrisma().cartItem.deleteMany({ where: { userId: user.userId } })
 
   return c.json({ clientSecret: paymentIntent.client_secret, orderId: order.id })
 })

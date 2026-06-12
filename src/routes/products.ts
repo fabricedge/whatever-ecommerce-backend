@@ -1,5 +1,5 @@
 import { Hono } from "hono"
-import { prisma } from "../lib/prisma.js"
+import { getPrisma } from "../lib/prisma.js"
 import { authMiddleware, adminMiddleware } from "../lib/auth-middleware.js"
 
 const products = new Hono()
@@ -23,8 +23,8 @@ products.get("/", async (c) => {
   }
 
   const [productList, count] = await Promise.all([
-    prisma.product.findMany({ where, take: limit, skip: offset, orderBy: { createdAt: "desc" } }),
-    prisma.product.count({ where }),
+    getPrisma().product.findMany({ where, take: limit, skip: offset, orderBy: { createdAt: "desc" } }),
+    getPrisma().product.count({ where }),
   ])
 
   return c.json({ products: productList, count })
@@ -32,7 +32,7 @@ products.get("/", async (c) => {
 
 products.get("/:id", async (c) => {
   const id = c.req.param("id")
-  const product = await prisma.product.findUnique({ where: { id } })
+  const product = await getPrisma().product.findUnique({ where: { id } })
   if (!product) return c.json({ error: "Not found" }, 404)
   return c.json(product)
 })
@@ -41,7 +41,7 @@ products.post("/", authMiddleware, adminMiddleware, async (c) => {
   const body = await c.req.json()
   const slug = body.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
 
-  const product = await prisma.product.create({
+  const product = await getPrisma().product.create({
     data: {
       name: body.name,
       slug,
@@ -60,7 +60,7 @@ products.put("/:id", authMiddleware, adminMiddleware, async (c) => {
   const id = c.req.param("id")
   const body = await c.req.json()
 
-  const product = await prisma.product.update({
+  const product = await getPrisma().product.update({
     where: { id },
     data: {
       name: body.name,
@@ -77,7 +77,7 @@ products.put("/:id", authMiddleware, adminMiddleware, async (c) => {
 
 products.delete("/:id", authMiddleware, adminMiddleware, async (c) => {
   const id = c.req.param("id")
-  await prisma.product.delete({ where: { id } })
+  await getPrisma().product.delete({ where: { id } })
   return c.json({ success: true })
 })
 

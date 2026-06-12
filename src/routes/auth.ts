@@ -1,7 +1,7 @@
 import { Hono } from "hono"
 import { z } from "zod"
 import { hashSync, compare } from "bcryptjs"
-import { prisma } from "../lib/prisma.js"
+import { getPrisma } from "../lib/prisma.js"
 import { signToken } from "../lib/jwt.js"
 import { authMiddleware, getUser } from "../lib/auth-middleware.js"
 
@@ -25,10 +25,10 @@ auth.post("/register", async (c) => {
 
   const { email, password, name } = parsed.data
 
-  const existing = await prisma.user.findUnique({ where: { email } })
+  const existing = await getPrisma().user.findUnique({ where: { email } })
   if (existing) return c.json({ error: "Email já cadastrado" }, 409)
 
-  const user = await prisma.user.create({
+  const user = await getPrisma().user.create({
     data: { email, passwordHash: hashSync(password, 10), name, role: "CUSTOMER" },
   })
 
@@ -43,7 +43,7 @@ auth.post("/login", async (c) => {
 
   const { email, password } = parsed.data
 
-  const user = await prisma.user.findUnique({ where: { email } })
+  const user = await getPrisma().user.findUnique({ where: { email } })
   if (!user || !user.passwordHash) return c.json({ error: "Credenciais inválidas" }, 401)
 
   const valid = await compare(password, user.passwordHash)
@@ -55,7 +55,7 @@ auth.post("/login", async (c) => {
 
 auth.get("/me", authMiddleware, async (c) => {
   const user = getUser(c)
-  const dbUser = await prisma.user.findUnique({
+  const dbUser = await getPrisma().user.findUnique({
     where: { id: user.userId },
     select: { id: true, email: true, name: true, role: true },
   })

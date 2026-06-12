@@ -21,6 +21,11 @@ app.route("/api/checkout", checkout)
 app.route("/api/orders", orders)
 app.route("/api/webhooks", webhooks)
 
+app.onError((err, c) => {
+  console.error("Unhandled error:", err)
+  return c.json({ error: "Erro interno" }, 500)
+})
+
 app.get("/api/health", (c) => c.json({ status: "ok" }))
 
 export default app
