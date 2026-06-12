@@ -1,34 +1,87 @@
 import { Hono } from "hono"
 import { getPrisma } from "../lib/prisma.js"
 import { getStripe } from "../lib/stripe.js"
-import { authMiddleware, getUser } from "../lib/auth-middleware.js"
+import { verifyToken } from "../lib/jwt.js"
 
 const checkout = new Hono()
 
-checkout.post("/", authMiddleware, async (c) => {
-  const user = getUser(c)
+checkout.post("/", async (c) => {
+  const body = await c.req.json()
 
-  const cartItems = await getPrisma().cartItem.findMany({
-    where: { userId: user.userId },
-    include: { product: true },
-  })
+  let email: string | undefined
+  let items: { productId: string; quantity: number }[] | undefined
 
-  if (cartItems.length === 0) {
-    return c.json({ error: "Cart is empty" }, 400)
+  // check if authenticated
+  const authHeader = c.req.header("Authorization")
+  let tokenUser: { userId: string; role: string; email: string } | null = null
+  if (authHeader?.startsWith("Bearer ")) {
+    try {
+      tokenUser = await verifyToken(authHeader.slice(7)) as any
+    } catch {}
   }
 
-  const total = cartItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0)
+  if (tokenUser) {
+    // authenticated flow — read cart from DB
+    email = tokenUser.email
+    const cartItems = await getPrisma().cartItem.findMany({
+      where: { userId: tokenUser.userId },
+      include: { product: true },
+    })
+    if (cartItems.length === 0) {
+      return c.json({ error: "Carrinho vazio" }, 400)
+    }
+    items = cartItems.map((ci) => ({ productId: ci.productId, quantity: ci.quantity }))
+  } else {
+    // anonymous flow — receive items in body
+    email = body.email
+    items = body.items
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return c.json({ error: "Carrinho vazio" }, 400)
+    }
+    if (!email || typeof email !== "string") {
+      return c.json({ error: "Email é obrigatório" }, 400)
+    }
+  }
+
+  const productIds = items.map((i) => i.productId)
+  const products = await getPrisma().product.findMany({
+    where: { id: { in: productIds } },
+  })
+  const productMap = new Map(products.map((p) => [p.id, p]))
+
+  for (const item of items) {
+    const product = productMap.get(item.productId)
+    if (!product) {
+      return c.json({ error: `Produto não encontrado` }, 400)
+    }
+    if (product.inventory < item.quantity) {
+      return c.json({
+        error: `Estoque insuficiente para "${product.name}". Disponível: ${product.inventory}`,
+      }, 400)
+    }
+  }
+
+  // find or create user by email
+  let user = await getPrisma().user.findUnique({ where: { email } })
+  if (!user) {
+    user = await getPrisma().user.create({ data: { email, role: "CUSTOMER" } })
+  }
+
+  const total = items.reduce((sum, item) => {
+    const product = productMap.get(item.productId)!
+    return sum + product.price * item.quantity
+  }, 0)
 
   const order = await getPrisma().order.create({
     data: {
-      userId: user.userId,
+      userId: user.id,
       total,
       status: "PENDING",
       items: {
-        create: cartItems.map((item) => ({
+        create: items.map((item) => ({
           productId: item.productId,
           quantity: item.quantity,
-          price: item.product.price,
+          price: productMap.get(item.productId)!.price,
         })),
       },
     },
@@ -46,7 +99,10 @@ checkout.post("/", authMiddleware, async (c) => {
     data: { stripePaymentIntentId: paymentIntent.id },
   })
 
-  await getPrisma().cartItem.deleteMany({ where: { userId: user.userId } })
+  // clear cart only for logged-in users
+  if (tokenUser) {
+    await getPrisma().cartItem.deleteMany({ where: { userId: user.id } })
+  }
 
   return c.json({ clientSecret: paymentIntent.client_secret, orderId: order.id })
 })

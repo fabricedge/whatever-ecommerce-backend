@@ -12,9 +12,17 @@ products.get("/", async (c) => {
   const limit = Math.min(Number(query.limit) || 20, 100)
   const offset = Number(query.offset) || 0
 
+  if (slug) {
+    const product = await getPrisma().product.findUnique({ where: { slug } })
+    return c.json({ products: product ? [product] : [], count: product ? 1 : 0 })
+  }
+
   const where: any = {}
   if (category) where.category = category
-  if (slug) where.slug = slug
+  if (query.ids) {
+    const ids = query.ids.split(",").filter(Boolean)
+    if (ids.length > 0) where.id = { in: ids }
+  }
   if (search) {
     where.OR = [
       { name: { contains: search, mode: "insensitive" } },

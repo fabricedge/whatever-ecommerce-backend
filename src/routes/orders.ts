@@ -39,6 +39,22 @@ orders.get("/admin", authMiddleware, async (c) => {
   return c.json({ orders: orderList, count, pages: Math.ceil(count / limit) })
 })
 
+orders.get("/lookup", async (c) => {
+  const email = c.req.query("email")
+  if (!email) return c.json({ error: "Email é obrigatório" }, 400)
+
+  const user = await getPrisma().user.findUnique({ where: { email } })
+  if (!user) return c.json({ orders: [] })
+
+  const orderList = await getPrisma().order.findMany({
+    where: { userId: user.id },
+    include: { items: { include: { product: true } } },
+    orderBy: { createdAt: "desc" },
+  })
+
+  return c.json({ orders: orderList })
+})
+
 orders.get("/:id", authMiddleware, async (c) => {
   const user = getUser(c)
   const id = c.req.param("id")
