@@ -1,8 +1,14 @@
 import { Hono } from "hono"
 import { getPrisma } from "../lib/prisma.js"
-import { authMiddleware, getUser } from "../lib/auth-middleware.js"
+import { authMiddleware, adminMiddleware, getUser } from "../lib/auth-middleware.js"
 
 const orders = new Hono()
+
+async function createOrderEvent(orderId: string, fromStatus: any, toStatus: string) {
+  await getPrisma().orderEvent.create({
+    data: { orderId, fromStatus, toStatus } as any,
+  })
+}
 
 orders.get("/", authMiddleware, async (c) => {
   const user = getUser(c)
@@ -23,7 +29,16 @@ orders.get("/admin", authMiddleware, async (c) => {
   const query = c.req.query()
   const page = Number(query.page) || 1
   const limit = 20
-  const where = query.status && query.status !== "ALL" ? { status: query.status as any } : {}
+  const search = query.search
+
+  const where: any = {}
+  if (query.status && query.status !== "ALL") where.status = query.status as any
+  if (search) {
+    where.OR = [
+      { id: { contains: search, mode: "insensitive" } },
+      { user: { email: { contains: search, mode: "insensitive" } } },
+    ]
+  }
 
   const [orderList, count] = await Promise.all([
     getPrisma().order.findMany({
@@ -55,20 +70,130 @@ orders.get("/lookup", async (c) => {
   return c.json({ orders: orderList })
 })
 
+orders.get("/stats", authMiddleware, adminMiddleware, async (c) => {
+  const now = new Date()
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const startOfWeek = new Date(startOfDay)
+  startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay())
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
+
+  const paidStatuses: ("PAID" | "SHIPPED" | "DELIVERED")[] = ["PAID", "SHIPPED", "DELIVERED"]
+
+  const [
+    totalRevenue,
+    revenueToday,
+    revenueWeek,
+    revenueMonth,
+    ordersByStatus,
+    totalOrders,
+    totalProducts,
+    totalCustomers,
+  ] = await Promise.all([
+    getPrisma().order.aggregate({
+      where: { status: { in: paidStatuses } },
+      _sum: { total: true },
+    }),
+    getPrisma().order.aggregate({
+      where: { status: { in: paidStatuses }, createdAt: { gte: startOfDay } },
+      _sum: { total: true },
+    }),
+    getPrisma().order.aggregate({
+      where: { status: { in: paidStatuses }, createdAt: { gte: startOfWeek } },
+      _sum: { total: true },
+    }),
+    getPrisma().order.aggregate({
+      where: { status: { in: paidStatuses }, createdAt: { gte: startOfMonth } },
+      _sum: { total: true },
+    }),
+    getPrisma().order.groupBy({
+      by: ["status"],
+      _count: true,
+    }),
+    getPrisma().order.count(),
+    getPrisma().product.count(),
+    getPrisma().user.count({ where: { role: "CUSTOMER" } }),
+  ])
+
+  return c.json({
+    revenue: {
+      total: totalRevenue._sum?.total ?? 0,
+      today: revenueToday._sum?.total ?? 0,
+      week: revenueWeek._sum?.total ?? 0,
+      month: revenueMonth._sum?.total ?? 0,
+    },
+    ordersByStatus: ordersByStatus.map((o) => ({ status: o.status, count: o._count })),
+    totalOrders,
+    totalProducts,
+    totalCustomers,
+  })
+})
+
 orders.get("/:id", authMiddleware, async (c) => {
   const user = getUser(c)
-  const id = c.req.param("id")
+  const id = c.req.param("id")!
 
   const where: any = { id }
   if (user.role !== "ADMIN") where.userId = user.userId
 
   const order = await getPrisma().order.findUnique({
     where: { id },
-    include: { items: { include: { product: true } }, user: true },
+    include: { items: { include: { product: true } }, user: true, events: { orderBy: { createdAt: "asc" } } },
   })
 
   if (!order) return c.json({ error: "Not found" }, 404)
   return c.json(order)
+})
+
+orders.put("/:id/status", authMiddleware, adminMiddleware, async (c) => {
+  const id = c.req.param("id")!
+  const body = await c.req.json()
+  const status: string = body.status
+
+  const validStatuses: string[] = ["PENDING", "PAID", "SHIPPED", "DELIVERED", "CANCELLED"]
+  if (!validStatuses.includes(status)) {
+    return c.json({ error: "Status inválido" }, 400)
+  }
+
+  const order = await getPrisma().order.findUnique({ where: { id } })
+  if (!order) return c.json({ error: "Not found" }, 404)
+
+  const [updated] = await Promise.all([
+    getPrisma().order.update({
+      where: { id },
+      data: { status: status as any },
+      include: { items: { include: { product: true } }, user: true, events: { orderBy: { createdAt: "asc" } } },
+    }),
+    createOrderEvent(id, order.status, status),
+  ])
+
+  return c.json(updated)
+})
+
+orders.post("/bulk-status", authMiddleware, adminMiddleware, async (c) => {
+  const body = await c.req.json()
+  const ids: string[] = body.ids
+  const status: string = body.status
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return c.json({ error: "IDs inválidos" }, 400)
+  }
+
+  const validStatuses: string[] = ["PENDING", "PAID", "SHIPPED", "DELIVERED", "CANCELLED"]
+  if (!validStatuses.includes(status)) {
+    return c.json({ error: "Status inválido" }, 400)
+  }
+
+  const orders = await getPrisma().order.findMany({ where: { id: { in: ids } } })
+
+  await Promise.all([
+    getPrisma().order.updateMany({
+      where: { id: { in: ids } },
+      data: { status: status as any },
+    }),
+    ...orders.map((o) => createOrderEvent(o.id, o.status, status)),
+  ])
+
+  return c.json({ success: true, updated: ids.length })
 })
 
 export default orders

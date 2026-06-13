@@ -62,4 +62,30 @@ auth.get("/me", authMiddleware, async (c) => {
   return c.json({ user: dbUser })
 })
 
+auth.put("/profile", authMiddleware, async (c) => {
+  const user = getUser(c)
+  const body = await c.req.json()
+  const { name } = body
+
+  const data: any = {}
+  if (name !== undefined) data.name = name
+
+  if (body.currentPassword && body.newPassword) {
+    const { compare, hashSync } = await import("bcryptjs")
+    const dbUser = await getPrisma().user.findUnique({ where: { id: user.userId } })
+    if (!dbUser?.passwordHash) return c.json({ error: "Senha não configurada" }, 400)
+    const valid = await compare(body.currentPassword, dbUser.passwordHash)
+    if (!valid) return c.json({ error: "Senha atual incorreta" }, 400)
+    data.passwordHash = hashSync(body.newPassword, 10)
+  }
+
+  const updated = await getPrisma().user.update({
+    where: { id: user.userId },
+    data,
+    select: { id: true, email: true, name: true, role: true },
+  })
+
+  return c.json({ user: updated })
+})
+
 export default auth

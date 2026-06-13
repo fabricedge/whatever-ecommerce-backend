@@ -4,6 +4,25 @@ import { authMiddleware, adminMiddleware } from "../lib/auth-middleware.js"
 
 const products = new Hono()
 
+products.get("/categories", async (c) => {
+  const result = await getPrisma().product.findMany({
+    where: { category: { not: null } },
+    select: { category: true },
+    distinct: ["category"],
+  })
+  const categories = result.map((r) => r.category).filter(Boolean) as string[]
+
+  const counts = await Promise.all(
+    categories.map((cat) =>
+      getPrisma().product.count({ where: { category: cat } })
+    )
+  )
+
+  return c.json({
+    categories: categories.map((name, i) => ({ name, productCount: counts[i] })),
+  })
+})
+
 products.get("/", async (c) => {
   const query = c.req.query()
   const category = query.category
@@ -86,6 +105,15 @@ products.put("/:id", authMiddleware, adminMiddleware, async (c) => {
 products.delete("/:id", authMiddleware, adminMiddleware, async (c) => {
   const id = c.req.param("id")
   await getPrisma().product.delete({ where: { id } })
+  return c.json({ success: true })
+})
+
+products.delete("/category/:name", authMiddleware, adminMiddleware, async (c) => {
+  const name = decodeURIComponent(c.req.param("name")!)
+  await getPrisma().product.updateMany({
+    where: { category: name },
+    data: { category: null },
+  })
   return c.json({ success: true })
 })
 

@@ -77,22 +77,30 @@ checkout.post("/", async (c) => {
       userId: user.id,
       total,
       status: "PENDING",
-      items: {
-        create: items.map((item) => ({
-          productId: item.productId,
-          quantity: item.quantity,
-          price: productMap.get(item.productId)!.price,
-        })),
-      },
     },
   })
 
-  const paymentIntent = await getStripe().paymentIntents.create({
-    amount: total,
-    currency: "brl",
-    metadata: { orderId: order.id },
-    automatic_payment_methods: { enabled: true },
+  await getPrisma().orderItem.createMany({
+    data: items.map((item) => ({
+      orderId: order.id,
+      productId: item.productId,
+      quantity: item.quantity,
+      price: productMap.get(item.productId)!.price,
+    })),
   })
+
+  let paymentIntent
+  try {
+    paymentIntent = await getStripe().paymentIntents.create({
+      amount: total,
+      currency: "brl",
+      metadata: { orderId: order.id },
+      automatic_payment_methods: { enabled: true },
+    })
+  } catch {
+    await getPrisma().order.delete({ where: { id: order.id } }).catch(() => {})
+    return c.json({ error: "Erro ao processar pagamento" }, 500)
+  }
 
   await getPrisma().order.update({
     where: { id: order.id },
