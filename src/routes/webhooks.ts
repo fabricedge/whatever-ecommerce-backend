@@ -1,8 +1,57 @@
 import { Hono } from "hono"
 import { getStripe } from "../lib/stripe.js"
 import { getPrisma } from "../lib/prisma.js"
+import type Stripe from "stripe"
 
 const webhooks = new Hono()
+
+async function fulfillOrder(orderId: string) {
+  const order = await getPrisma().order.findUnique({ where: { id: orderId } })
+  if (order && order.status === "PENDING") {
+    await Promise.all([
+      getPrisma().order.update({
+        where: { id: orderId },
+        data: { status: "PAID" },
+      }),
+      getPrisma().orderEvent.create({
+        data: { orderId, fromStatus: "PENDING", toStatus: "PAID" },
+      } as any),
+    ])
+
+    const items = await getPrisma().orderItem.findMany({ where: { orderId } })
+    for (const item of items) {
+      await getPrisma().product.update({
+        where: { id: item.productId },
+        data: { inventory: { decrement: item.quantity } },
+      })
+    }
+  }
+}
+
+async function saveShippingAddress(session: Stripe.Checkout.Session) {
+  const orderId = session.metadata?.orderId
+  if (!orderId) return
+
+  const s = session as any
+  const shipping = s.shipping_details
+  if (!shipping?.address) return
+
+  const address = shipping.address
+  const line1 = address.line1 || ""
+  const line2 = address.line2 ? `, ${address.line2}` : ""
+
+  await getPrisma().order.update({
+    where: { id: orderId },
+    data: {
+      shippingName: shipping.name || null,
+      shippingPhone: s.phone_number_collection?.phone_number || null,
+      shippingAddress: `${line1}${line2}`,
+      shippingCity: address.city || null,
+      shippingState: address.state || null,
+      shippingZip: address.postal_code || null,
+    },
+  })
+}
 
 webhooks.post("/stripe", async (c) => {
   const body = await c.req.text()
@@ -18,23 +67,15 @@ webhooks.post("/stripe", async (c) => {
   if (event.type === "payment_intent.succeeded") {
     const paymentIntent = event.data.object
     const orderId = paymentIntent.metadata.orderId
+    if (orderId) await fulfillOrder(orderId)
+  }
 
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object as Stripe.Checkout.Session
+    const orderId = session.metadata?.orderId
     if (orderId) {
-      const order = await getPrisma().order.findUnique({ where: { id: orderId } })
-      if (order && order.status === "PENDING") {
-        await getPrisma().order.update({
-          where: { id: orderId },
-          data: { status: "PAID" },
-        })
-
-        const items = await getPrisma().orderItem.findMany({ where: { orderId } })
-        for (const item of items) {
-          await getPrisma().product.update({
-            where: { id: item.productId },
-            data: { inventory: { decrement: item.quantity } },
-          })
-        }
-      }
+      await saveShippingAddress(session)
+      await fulfillOrder(orderId)
     }
   }
 

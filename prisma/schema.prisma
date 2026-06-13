@@ -93,11 +93,29 @@ model Order {
   userId                String
   total                 Int
   status                OrderStatus @default(PENDING)
-  stripePaymentIntentId String?     @unique
+  stripePaymentIntentId  String?    @unique
+  stripeCheckoutSessionId String?   @unique
+  shippingName          String?
+  shippingPhone         String?
+  shippingAddress       String?
+  shippingCity          String?
+  shippingState         String?
+  shippingZip           String?
   createdAt             DateTime    @default(now())
 
-  user  User        @relation(fields: [userId], references: [id])
-  items OrderItem[]
+  user   User         @relation(fields: [userId], references: [id])
+  items  OrderItem[]
+  events OrderEvent[]
+}
+
+model OrderEvent {
+  id        String   @id @default(cuid())
+  orderId   String
+  fromStatus String?
+  toStatus  String
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 }
 
 enum OrderStatus {
@@ -106,6 +124,11 @@ enum OrderStatus {
   SHIPPED
   DELIVERED
   CANCELLED
+}
+
+model Setting {
+  key   String @id
+  value String
 }
 
 model OrderItem {
