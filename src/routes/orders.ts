@@ -1,8 +1,13 @@
 import { Hono } from "hono"
+import { Context } from "hono"
 import { getPrisma } from "../lib/prisma.js"
 import { authMiddleware, adminMiddleware, getUser } from "../lib/auth-middleware.js"
 
 const orders = new Hono()
+
+function getStoreId(c: Context): string {
+  return c.get("storeId")!
+}
 
 async function createOrderEvent(orderId: string, fromStatus: any, toStatus: string) {
   await getPrisma().orderEvent.create({
@@ -11,10 +16,11 @@ async function createOrderEvent(orderId: string, fromStatus: any, toStatus: stri
 }
 
 orders.get("/", authMiddleware, async (c) => {
+  const storeId = getStoreId(c)
   const user = getUser(c)
 
   const orderList = await getPrisma().order.findMany({
-    where: { userId: user.userId },
+    where: { userId: user.userId, storeId },
     include: { items: { include: { product: true } } },
     orderBy: { createdAt: "desc" },
   })
@@ -23,15 +29,16 @@ orders.get("/", authMiddleware, async (c) => {
 })
 
 orders.get("/admin", authMiddleware, async (c) => {
+  const storeId = getStoreId(c)
   const user = getUser(c)
-  if (user.role !== "ADMIN") return c.json({ error: "Forbidden" }, 403)
+  if (user.role !== "ADMIN" && user.role !== "SUPER_ADMIN") return c.json({ error: "Forbidden" }, 403)
 
   const query = c.req.query()
   const page = Number(query.page) || 1
   const limit = 20
   const search = query.search
 
-  const where: any = {}
+  const where: any = { storeId }
   if (query.status && query.status !== "ALL") where.status = query.status as any
   if (search) {
     where.OR = [
@@ -55,6 +62,7 @@ orders.get("/admin", authMiddleware, async (c) => {
 })
 
 orders.get("/lookup", async (c) => {
+  const storeId = getStoreId(c)
   const email = c.req.query("email")
   if (!email) return c.json({ error: "Email é obrigatório" }, 400)
 
@@ -62,7 +70,7 @@ orders.get("/lookup", async (c) => {
   if (!user) return c.json({ orders: [] })
 
   const orderList = await getPrisma().order.findMany({
-    where: { userId: user.id },
+    where: { userId: user.id, storeId },
     include: { items: { include: { product: true } } },
     orderBy: { createdAt: "desc" },
   })
@@ -71,6 +79,7 @@ orders.get("/lookup", async (c) => {
 })
 
 orders.get("/stats", authMiddleware, adminMiddleware, async (c) => {
+  const storeId = getStoreId(c)
   const now = new Date()
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const startOfWeek = new Date(startOfDay)
@@ -78,6 +87,8 @@ orders.get("/stats", authMiddleware, adminMiddleware, async (c) => {
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
 
   const paidStatuses: ("PAID" | "SHIPPED" | "DELIVERED")[] = ["PAID", "SHIPPED", "DELIVERED"]
+
+  const storeFilter = { storeId }
 
   const [
     totalRevenue,
@@ -90,27 +101,28 @@ orders.get("/stats", authMiddleware, adminMiddleware, async (c) => {
     totalCustomers,
   ] = await Promise.all([
     getPrisma().order.aggregate({
-      where: { status: { in: paidStatuses } },
+      where: { status: { in: paidStatuses }, ...storeFilter },
       _sum: { total: true },
     }),
     getPrisma().order.aggregate({
-      where: { status: { in: paidStatuses }, createdAt: { gte: startOfDay } },
+      where: { status: { in: paidStatuses }, createdAt: { gte: startOfDay }, ...storeFilter },
       _sum: { total: true },
     }),
     getPrisma().order.aggregate({
-      where: { status: { in: paidStatuses }, createdAt: { gte: startOfWeek } },
+      where: { status: { in: paidStatuses }, createdAt: { gte: startOfWeek }, ...storeFilter },
       _sum: { total: true },
     }),
     getPrisma().order.aggregate({
-      where: { status: { in: paidStatuses }, createdAt: { gte: startOfMonth } },
+      where: { status: { in: paidStatuses }, createdAt: { gte: startOfMonth }, ...storeFilter },
       _sum: { total: true },
     }),
     getPrisma().order.groupBy({
       by: ["status"],
+      where: storeFilter,
       _count: true,
     }),
-    getPrisma().order.count(),
-    getPrisma().product.count(),
+    getPrisma().order.count({ where: storeFilter }),
+    getPrisma().product.count({ where: storeFilter }),
     getPrisma().user.count({ where: { role: "CUSTOMER" } }),
   ])
 
@@ -129,11 +141,12 @@ orders.get("/stats", authMiddleware, adminMiddleware, async (c) => {
 })
 
 orders.get("/:id", authMiddleware, async (c) => {
+  const storeId = getStoreId(c)
   const user = getUser(c)
   const id = c.req.param("id")!
 
-  const where: any = { id }
-  if (user.role !== "ADMIN") where.userId = user.userId
+  const where: any = { id, storeId }
+  if (user.role !== "ADMIN" && user.role !== "SUPER_ADMIN") where.userId = user.userId
 
   const order = await getPrisma().order.findUnique({
     where: { id },
@@ -145,6 +158,7 @@ orders.get("/:id", authMiddleware, async (c) => {
 })
 
 orders.put("/:id/status", authMiddleware, adminMiddleware, async (c) => {
+  const storeId = getStoreId(c)
   const id = c.req.param("id")!
   const body = await c.req.json()
   const status: string = body.status
@@ -154,7 +168,7 @@ orders.put("/:id/status", authMiddleware, adminMiddleware, async (c) => {
     return c.json({ error: "Status inválido" }, 400)
   }
 
-  const order = await getPrisma().order.findUnique({ where: { id } })
+  const order = await getPrisma().order.findUnique({ where: { id, storeId } })
   if (!order) return c.json({ error: "Not found" }, 404)
 
   const [updated] = await Promise.all([
@@ -170,6 +184,7 @@ orders.put("/:id/status", authMiddleware, adminMiddleware, async (c) => {
 })
 
 orders.post("/bulk-status", authMiddleware, adminMiddleware, async (c) => {
+  const storeId = getStoreId(c)
   const body = await c.req.json()
   const ids: string[] = body.ids
   const status: string = body.status
@@ -183,11 +198,11 @@ orders.post("/bulk-status", authMiddleware, adminMiddleware, async (c) => {
     return c.json({ error: "Status inválido" }, 400)
   }
 
-  const orders = await getPrisma().order.findMany({ where: { id: { in: ids } } })
+  const orders = await getPrisma().order.findMany({ where: { id: { in: ids }, storeId } })
 
   await Promise.all([
     getPrisma().order.updateMany({
-      where: { id: { in: ids } },
+      where: { id: { in: ids }, storeId },
       data: { status: status as any },
     }),
     ...orders.map((o) => createOrderEvent(o.id, o.status, status)),

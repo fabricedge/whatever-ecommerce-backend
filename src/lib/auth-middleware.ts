@@ -18,7 +18,7 @@ export async function authMiddleware(c: Context, next: Next) {
 
 export async function adminMiddleware(c: Context, next: Next) {
   const user: JwtPayload | undefined = c.get("user")
-  if (user?.role !== "ADMIN") {
+  if (user?.role !== "ADMIN" && user?.role !== "SUPER_ADMIN") {
     return c.json({ error: "Forbidden" }, 403)
   }
   await next()

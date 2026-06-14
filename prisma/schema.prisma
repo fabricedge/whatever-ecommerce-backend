@@ -15,9 +15,11 @@ model Product {
   images      String[]
   category    String?
   inventory   Int      @default(0)
+  storeId     String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  store      Store       @relation(fields: [storeId], references: [id])
   cartItems  CartItem[]
   orderItems OrderItem[]
 }
@@ -30,6 +32,7 @@ model User {
   role         Role     @default(CUSTOMER)
   createdAt    DateTime @default(now())
 
+  stores   UserStore[]
   accounts Account[]
   sessions Session[]
   orders   Order[]
@@ -39,6 +42,31 @@ model User {
 enum Role {
   CUSTOMER
   ADMIN
+  SUPER_ADMIN
+}
+
+model Store {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  domain    String?  @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  products Product[]
+  orders   Order[]
+  settings Setting[]
+  users    UserStore[]
+}
+
+model UserStore {
+  userId  String
+  storeId String
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, storeId])
 }
 
 model Account {
@@ -91,6 +119,7 @@ model CartItem {
 model Order {
   id                    String      @id @default(cuid())
   userId                String
+  storeId               String
   total                 Int
   status                OrderStatus @default(PENDING)
   stripePaymentIntentId  String?    @unique
@@ -103,7 +132,17 @@ model Order {
   shippingZip           String?
   createdAt             DateTime    @default(now())
 
+  trackingCode          String?
+  shippingLabelB64      String?
+  shippingProduct       String?
+  shippingPrice         Int?
+  shippingWeight        Float?
+  shippingLength        Int?
+  shippingWidth         Int?
+  shippingHeight        Int?
+
   user   User         @relation(fields: [userId], references: [id])
+  store  Store        @relation(fields: [storeId], references: [id])
   items  OrderItem[]
   events OrderEvent[]
 }
@@ -127,8 +166,13 @@ enum OrderStatus {
 }
 
 model Setting {
-  key   String @id
-  value String
+  storeId String
+  key     String
+  value   String
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, key])
 }
 
 model OrderItem {

@@ -8,18 +8,45 @@ const prisma = new PrismaClient({ adapter })
 
 async function main() {
   const adminEmail = "admin@whatever.com"
-  const existingAdmin = await prisma.user.findUnique({ where: { email: adminEmail } })
+  let admin = await prisma.user.findUnique({ where: { email: adminEmail } })
 
-  if (!existingAdmin) {
-    await prisma.user.create({
+  if (!admin) {
+    admin = await prisma.user.create({
       data: {
         email: adminEmail,
         name: "Admin",
         passwordHash: hashSync("admin123", 10),
-        role: "ADMIN",
+        role: "SUPER_ADMIN",
       },
     })
-    console.log("Admin criado: admin@whatever.com / admin123")
+    console.log("SUPER_ADMIN criado: admin@whatever.com / admin123")
+  } else if (admin.role !== "SUPER_ADMIN") {
+    admin = await prisma.user.update({
+      where: { email: adminEmail },
+      data: { role: "SUPER_ADMIN" },
+    })
+    console.log("Admin atualizado para SUPER_ADMIN")
+  }
+
+  let defaultStore = await prisma.store.findFirst({ where: { slug: "minha-loja" } })
+  if (!defaultStore) {
+    defaultStore = await prisma.store.create({
+      data: {
+        name: "Minha Loja",
+        slug: "minha-loja",
+      },
+    })
+    console.log("Loja padrão criada: Minha Loja")
+  }
+
+  const existingMembership = await prisma.userStore.findUnique({
+    where: { userId_storeId: { userId: admin.id, storeId: defaultStore.id } },
+  })
+  if (!existingMembership) {
+    await prisma.userStore.create({
+      data: { userId: admin.id, storeId: defaultStore.id },
+    })
+    console.log("Admin associado como OWNER da loja padrão")
   }
 
   const products = [
@@ -35,11 +62,28 @@ async function main() {
     const slug = product.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
     const existing = await prisma.product.findUnique({ where: { slug } })
     if (!existing) {
-      await prisma.product.create({ data: { ...product, slug } })
+      await prisma.product.create({ data: { ...product, slug, storeId: defaultStore.id } })
+    } else if (!existing.storeId) {
+      await prisma.product.update({
+        where: { id: existing.id },
+        data: { storeId: defaultStore.id },
+      })
     }
   }
 
-  console.log("Produtos seed criados!")
+  // Backfill any orders without storeId
+  await prisma.order.updateMany({
+    where: { storeId: { equals: undefined } },
+    data: { storeId: defaultStore.id },
+  })
+
+  // Backfill any settings without storeId
+  const orphanSettings = await prisma.setting.findMany({ where: { storeId: { equals: undefined } } } as any)
+  for (const s of orphanSettings) {
+    await prisma.setting.delete({ where: { storeId_key: { storeId: s.storeId, key: s.key } } } as any)
+  }
+
+  console.log("Seed concluído!")
 }
 
 main()

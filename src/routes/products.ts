@@ -4,9 +4,14 @@ import { authMiddleware, adminMiddleware } from "../lib/auth-middleware.js"
 
 const products = new Hono()
 
+function getStoreId(c: any): string {
+  return c.get("storeId")!
+}
+
 products.get("/categories", async (c) => {
+  const storeId = getStoreId(c)
   const result = await getPrisma().product.findMany({
-    where: { category: { not: null } },
+    where: { category: { not: null }, storeId },
     select: { category: true },
     distinct: ["category"],
   })
@@ -14,7 +19,7 @@ products.get("/categories", async (c) => {
 
   const counts = await Promise.all(
     categories.map((cat) =>
-      getPrisma().product.count({ where: { category: cat } })
+      getPrisma().product.count({ where: { category: cat, storeId } })
     )
   )
 
@@ -24,6 +29,7 @@ products.get("/categories", async (c) => {
 })
 
 products.get("/", async (c) => {
+  const storeId = getStoreId(c)
   const query = c.req.query()
   const category = query.category
   const search = query.search
@@ -32,11 +38,11 @@ products.get("/", async (c) => {
   const offset = Number(query.offset) || 0
 
   if (slug) {
-    const product = await getPrisma().product.findUnique({ where: { slug } })
+    const product = await getPrisma().product.findUnique({ where: { slug, storeId } })
     return c.json({ products: product ? [product] : [], count: product ? 1 : 0 })
   }
 
-  const where: any = {}
+  const where: any = { storeId }
   if (category) where.category = category
   if (query.ids) {
     const ids = query.ids.split(",").filter(Boolean)
@@ -58,13 +64,15 @@ products.get("/", async (c) => {
 })
 
 products.get("/:id", async (c) => {
+  const storeId = getStoreId(c)
   const id = c.req.param("id")
-  const product = await getPrisma().product.findUnique({ where: { id } })
+  const product = await getPrisma().product.findUnique({ where: { id, storeId } })
   if (!product) return c.json({ error: "Not found" }, 404)
   return c.json(product)
 })
 
 products.post("/", authMiddleware, adminMiddleware, async (c) => {
+  const storeId = getStoreId(c)
   const body = await c.req.json()
   const slug = body.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
 
@@ -77,6 +85,7 @@ products.post("/", authMiddleware, adminMiddleware, async (c) => {
       images: body.images || [],
       category: body.category || null,
       inventory: body.inventory ?? 0,
+      storeId,
     },
   })
 
@@ -84,11 +93,12 @@ products.post("/", authMiddleware, adminMiddleware, async (c) => {
 })
 
 products.put("/:id", authMiddleware, adminMiddleware, async (c) => {
+  const storeId = getStoreId(c)
   const id = c.req.param("id")
   const body = await c.req.json()
 
   const product = await getPrisma().product.update({
-    where: { id },
+    where: { id, storeId },
     data: {
       name: body.name,
       description: body.description,
@@ -103,15 +113,17 @@ products.put("/:id", authMiddleware, adminMiddleware, async (c) => {
 })
 
 products.delete("/:id", authMiddleware, adminMiddleware, async (c) => {
+  const storeId = getStoreId(c)
   const id = c.req.param("id")
-  await getPrisma().product.delete({ where: { id } })
+  await getPrisma().product.delete({ where: { id, storeId } })
   return c.json({ success: true })
 })
 
 products.delete("/category/:name", authMiddleware, adminMiddleware, async (c) => {
+  const storeId = getStoreId(c)
   const name = decodeURIComponent(c.req.param("name")!)
   await getPrisma().product.updateMany({
-    where: { category: name },
+    where: { category: name, storeId },
     data: { category: null },
   })
   return c.json({ success: true })

@@ -1,11 +1,17 @@
 import { Hono } from "hono"
+import { Context } from "hono"
 import { getPrisma } from "../lib/prisma.js"
 import { getStripe } from "../lib/stripe.js"
 import { verifyToken } from "../lib/jwt.js"
 
 const checkout = new Hono()
 
+function getStoreId(c: Context): string {
+  return c.get("storeId")!
+}
+
 checkout.post("/", async (c) => {
+  const storeId = getStoreId(c)
   const body = await c.req.json()
 
   let email: string | undefined
@@ -75,6 +81,7 @@ checkout.post("/", async (c) => {
   const order = await getPrisma().order.create({
     data: {
       userId: user.id,
+      storeId,
       total,
       status: "PENDING",
     },
