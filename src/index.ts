@@ -11,7 +11,9 @@ import users from "./routes/users.js"
 import settings from "./routes/settings.js"
 import stores from "./routes/stores.js"
 import shipping from "./routes/shipping.js"
+import upload from "./routes/upload.js"
 import { storeMiddleware } from "./lib/store-middleware.js"
+import { generalLimiter, authLimiter, uploadLimiter } from "./lib/rate-limiter.js"
 
 const app = new Hono()
 
@@ -22,6 +24,11 @@ app.use("*", cors({
 
 // Store middleware scopes requests to a store (default: "minha-loja" if no X-Store-Id)
 app.use("*", storeMiddleware)
+
+// Rate limiting
+app.use("*", generalLimiter)
+app.use("/api/auth/*", authLimiter)
+app.use("/api/upload*", uploadLimiter)
 
 app.route("/api/auth", auth)
 app.route("/api/products", products)
@@ -34,6 +41,7 @@ app.route("/api/users", users)
 app.route("/api/settings", settings)
 app.route("/api/stores", stores)
 app.route("/api/shipping", shipping)
+app.route("/api/upload", upload)
 
 app.onError((err, c) => {
   console.error("Unhandled error:", err)

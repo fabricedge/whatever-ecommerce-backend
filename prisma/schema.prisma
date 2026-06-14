@@ -19,9 +19,10 @@ model Product {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  store      Store       @relation(fields: [storeId], references: [id])
-  cartItems  CartItem[]
-  orderItems OrderItem[]
+  store       Store       @relation(fields: [storeId], references: [id])
+  cartItems   CartItem[]
+  orderItems  OrderItem[]
+  imageRecords Image[]
 }
 
 model User {
@@ -173,6 +174,23 @@ model Setting {
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
   @@unique([storeId, key])
+}
+
+model Image {
+  id        String   @id @default(cuid())
+  productId String?
+  publicId  String   @unique
+  url       String
+  width     Int?
+  height    Int?
+  format    String?
+  bytes     Int?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([productId])
 }
 
 model OrderItem {
