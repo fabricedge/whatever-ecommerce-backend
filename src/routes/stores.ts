@@ -101,6 +101,46 @@ stores.put("/:id", authMiddleware, async (c) => {
   return c.json(updated)
 })
 
+// Lookup store by domain (public)
+stores.get("/lookup", async (c) => {
+  const domain = c.req.query("domain")
+  if (!domain) return c.json({ error: "domain query parameter is required" }, 400)
+
+  const store = await getPrisma().store.findFirst({
+    where: { domain, isActive: true },
+  })
+  if (!store) return c.json({ error: "No store found for this domain" }, 404)
+
+  return c.json({ id: store.id, name: store.name, slug: store.slug })
+})
+
+// Update store domain (super admin only)
+stores.put("/:id/domain", authMiddleware, async (c) => {
+  const user = getUser(c)
+  if (user.role !== "SUPER_ADMIN") return c.json({ error: "Forbidden" }, 403)
+
+  const id = c.req.param("id")!
+  const body = await c.req.json()
+  const domain: string | null = body.domain || null
+
+  const store = await getPrisma().store.findUnique({ where: { id } })
+  if (!store) return c.json({ error: "Store not found" }, 404)
+
+  if (domain) {
+    const existing = await getPrisma().store.findFirst({
+      where: { domain, id: { not: id } },
+    })
+    if (existing) return c.json({ error: "Domain already in use" }, 409)
+  }
+
+  const updated = await getPrisma().store.update({
+    where: { id },
+    data: { domain },
+  })
+
+  return c.json(updated)
+})
+
 // Public: get branding for a store
 stores.get("/:id/branding", async (c) => {
   const id = c.req.param("id")!!

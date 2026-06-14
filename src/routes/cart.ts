@@ -54,6 +54,26 @@ cart.patch("/:itemId", authMiddleware, async (c) => {
   return c.json(updated)
 })
 
+cart.put("/sync", authMiddleware, async (c) => {
+  const user = getUser(c)
+  const { items } = await c.req.json() as { items: { productId: string; quantity: number }[] }
+  if (!items || !Array.isArray(items)) return c.json({ error: "Invalid items" }, 400)
+
+  await getPrisma().cartItem.deleteMany({ where: { userId: user.userId } })
+
+  if (items.length > 0) {
+    await getPrisma().cartItem.createMany({
+      data: items.map((i) => ({
+        userId: user.userId,
+        productId: i.productId,
+        quantity: Math.min(1000, Math.max(1, i.quantity)),
+      })),
+    })
+  }
+
+  return c.json({ success: true })
+})
+
 cart.delete("/:itemId", authMiddleware, async (c) => {
   const user = getUser(c)
   const itemId = c.req.param("itemId")

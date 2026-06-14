@@ -50,12 +50,12 @@ async function main() {
   }
 
   const products = [
-    { name: "Camiseta Preta", description: "Camiseta 100% algodão", price: 5990, category: "Vestuário", inventory: 50 },
-    { name: "Tênis Esportivo", description: "Tênis confortável para corrida", price: 29990, category: "Calçados", inventory: 30 },
-    { name: "Mochila Executiva", description: "Mochila para notebook 15\"", price: 14990, category: "Acessórios", inventory: 20 },
-    { name: "Fone Bluetooth", description: "Fone sem fio com cancelamento de ruído", price: 19990, category: "Eletrônicos", inventory: 40 },
-    { name: "Caneca Personalizada", description: "Caneca de cerâmica 300ml", price: 2990, category: "Casa", inventory: 100 },
-    { name: "Livro: JavaScript Moderno", description: "Guia completo de JS", price: 7990, category: "Livros", inventory: 25 },
+    { name: "Camiseta Preta", description: "Camiseta 100% algodão", price: 5990, category: "Vestuário", inventory: 50, images: ["https://res.cloudinary.com/dlcui5ugt/image/upload/v1781437184/products/camiseta-preta.jpg"] },
+    { name: "Tênis Esportivo", description: "Tênis confortável para corrida", price: 29990, category: "Calçados", inventory: 30, images: ["https://res.cloudinary.com/dlcui5ugt/image/upload/v1781437185/products/t-nis-esportivo.jpg"] },
+    { name: "Mochila Executiva", description: "Mochila para notebook 15\"", price: 14990, category: "Acessórios", inventory: 20, images: ["https://res.cloudinary.com/dlcui5ugt/image/upload/v1781437185/products/mochila-executiva.jpg"] },
+    { name: "Fone Bluetooth", description: "Fone sem fio com cancelamento de ruído", price: 19990, category: "Eletrônicos", inventory: 40, images: ["https://res.cloudinary.com/dlcui5ugt/image/upload/v1781437186/products/fone-bluetooth.jpg"] },
+    { name: "Caneca Personalizada", description: "Caneca de cerâmica 300ml", price: 2990, category: "Casa", inventory: 100, images: ["https://res.cloudinary.com/dlcui5ugt/image/upload/v1781437186/products/caneca-personalizada.jpg"] },
+    { name: "Livro: JavaScript Moderno", description: "Guia completo de JS", price: 7990, category: "Livros", inventory: 25, images: ["https://res.cloudinary.com/dlcui5ugt/image/upload/v1781437187/products/livro-javascript-moderno.jpg"] },
   ]
 
   for (const product of products) {
