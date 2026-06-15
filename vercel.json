@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npx prisma db push --force-reset --accept-data-loss && npx prisma generate && npx tsx prisma/seed.ts",
+  "buildCommand": "npx prisma db push && npx prisma generate",
   "installCommand": "npm install",
   "functions": {
     "api/index.ts": {

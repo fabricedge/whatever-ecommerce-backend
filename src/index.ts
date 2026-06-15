@@ -10,6 +10,7 @@ import webhooks from "./routes/webhooks.js"
 import users from "./routes/users.js"
 import settings from "./routes/settings.js"
 import stores from "./routes/stores.js"
+import storeRequests from "./routes/store-requests.js"
 import shipping from "./routes/shipping.js"
 import upload from "./routes/upload.js"
 import { storeMiddleware } from "./lib/store-middleware.js"
@@ -40,6 +41,7 @@ app.route("/api/webhooks", webhooks)
 app.route("/api/users", users)
 app.route("/api/settings", settings)
 app.route("/api/stores", stores)
+app.route("/api/store-requests", storeRequests)
 app.route("/api/shipping", shipping)
 app.route("/api/upload", upload)
 

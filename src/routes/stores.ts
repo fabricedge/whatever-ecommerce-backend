@@ -20,6 +20,19 @@ stores.get("/", authMiddleware, async (c) => {
   return c.json({ stores: memberships.map((m) => m.store) })
 })
 
+// Lookup store by domain (public) — MUST be before /:id to avoid param capture
+stores.get("/lookup", async (c) => {
+  const domain = c.req.query("domain")
+  if (!domain) return c.json({ error: "domain query parameter is required" }, 400)
+
+  const store = await getPrisma().store.findFirst({
+    where: { domain, isActive: true },
+  })
+  if (!store) return c.json({ error: "No store found for this domain" }, 404)
+
+  return c.json({ id: store.id, name: store.name, slug: store.slug })
+})
+
 // Get single store
 stores.get("/:id", authMiddleware, async (c) => {
   const user = getUser(c)
@@ -45,19 +58,10 @@ stores.post("/", authMiddleware, adminMiddleware, async (c) => {
   const name: string = body.name || "Nova Loja"
 
   if (user.role !== "SUPER_ADMIN") {
-    const globalSetting = await getPrisma().setting.findUnique({
-      where: { storeId_key: { storeId: "global", key: "multi_store_enabled" } },
-    })
-    if (globalSetting?.value !== "true") {
-      return c.json({ error: "Multi-store feature is not enabled" }, 403)
-    }
-
-    const userPermission = await getPrisma().setting.findUnique({
-      where: { storeId_key: { storeId: "global", key: `user:${user.userId}:can_create_stores` } },
-    })
-    if (userPermission?.value !== "true") {
-      return c.json({ error: "You don't have permission to create stores" }, 403)
-    }
+    return c.json({
+      error: "Admins must submit a store request instead",
+      action: "use POST /api/store-requests",
+    }, 403)
   }
 
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
@@ -101,17 +105,14 @@ stores.put("/:id", authMiddleware, async (c) => {
   return c.json(updated)
 })
 
-// Lookup store by domain (public)
-stores.get("/lookup", async (c) => {
-  const domain = c.req.query("domain")
-  if (!domain) return c.json({ error: "domain query parameter is required" }, 400)
-
-  const store = await getPrisma().store.findFirst({
-    where: { domain, isActive: true },
+// Check if a store has a deployment token (public, for token gate)
+stores.get("/:id/has-token", async (c) => {
+  const id = c.req.param("id")!
+  const store = await getPrisma().store.findUnique({
+    where: { id },
+    select: { deploymentToken: true },
   })
-  if (!store) return c.json({ error: "No store found for this domain" }, 404)
-
-  return c.json({ id: store.id, name: store.name, slug: store.slug })
+  return c.json({ hasToken: !!store?.deploymentToken })
 })
 
 // Update store domain (super admin only)

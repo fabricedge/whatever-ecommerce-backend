@@ -6,3 +6,4 @@ src/generated/
 dist/
 .vercel
 .env.production
+.env*
