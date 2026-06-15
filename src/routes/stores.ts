@@ -20,6 +20,17 @@ stores.get("/", authMiddleware, async (c) => {
   return c.json({ stores: memberships.map((m) => m.store) })
 })
 
+// Return first active DEFAULT store (public fallback for stfront.fskk.site)
+stores.get("/default", async (c) => {
+  const store = await getPrisma().store.findFirst({
+    where: { isActive: true, storefrontType: "DEFAULT" },
+    select: { id: true, name: true, slug: true },
+    orderBy: { createdAt: "asc" },
+  })
+  if (!store) return c.json({ error: "No default store found" }, 404)
+  return c.json(store)
+})
+
 // Lookup store by domain (public) — MUST be before /:id to avoid param capture
 stores.get("/lookup", async (c) => {
   const domain = c.req.query("domain")
