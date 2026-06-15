@@ -15,8 +15,7 @@ export interface DnsRecordResult {
   content: string
 }
 
-export async function createCnameRecord(subdomain: string, target: string): Promise<DnsRecordResult> {
-  const name = `${subdomain}.fskk.site`
+export async function createDnsRecord(subdomain: string): Promise<DnsRecordResult> {
   const res = await fetch(`${CF_API}/zones/${zoneId()}/dns_records`, {
     method: "POST",
     headers: {
@@ -24,10 +23,11 @@ export async function createCnameRecord(subdomain: string, target: string): Prom
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      type: "CNAME",
+      type: "A",
       name: subdomain,
-      content: target,
-      proxied: true,
+      content: "76.76.21.21",
+      proxied: false,
+      ttl: 120,
     }),
   })
 

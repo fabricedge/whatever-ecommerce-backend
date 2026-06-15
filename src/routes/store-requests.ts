@@ -3,7 +3,7 @@ import { hashSync, compare } from "bcryptjs"
 import { getPrisma } from "../lib/prisma.js"
 import { authMiddleware, adminMiddleware, getUser } from "../lib/auth-middleware.js"
 import { deployStorefront } from "../services/vercel.js"
-import { createCnameRecord, deleteDnsRecord } from "../services/cloudflare.js"
+import { createDnsRecord, deleteDnsRecord } from "../services/cloudflare.js"
 
 const storeRequests = new Hono()
 
@@ -107,7 +107,7 @@ storeRequests.put("/:id/approve", authMiddleware, async (c) => {
   // Create CNAME record via Cloudflare API
   if (storeRequest.storefrontType === "INDEPENDENT") {
     try {
-      const dns = await createCnameRecord(slug, "stfront.fskk.site")
+      const dns = await createDnsRecord(slug)
       dnsRecordId = dns.id
     } catch (err: any) {
       return c.json({ error: `Failed to create DNS record: ${err.message}` }, 500)
