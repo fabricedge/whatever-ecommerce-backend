@@ -48,16 +48,18 @@ enum Role {
 }
 
 model Store {
-  id               String             @id @default(cuid())
-  name             String
-  slug             String             @unique
-  domain           String?            @unique
-  isActive         Boolean            @default(true)
-  storefrontType   StorefrontType     @default(DEFAULT)
-  deploymentUrl    String?
-  deploymentToken  String?
-  deploymentStatus String?
-  createdAt        DateTime           @default(now())
+  id                        String             @id @default(cuid())
+  name                      String
+  slug                      String             @unique
+  domain                    String?            @unique
+  isActive                  Boolean            @default(true)
+  storefrontType            StorefrontType     @default(DEFAULT)
+  deploymentUrl             String?
+  deploymentToken           String?
+  deploymentStatus          String?
+  stripeConnectAccountId    String?
+  connectOnboardingComplete Boolean            @default(false)
+  createdAt                 DateTime           @default(now())
 
   products      Product[]
   orders        Order[]
@@ -211,25 +213,31 @@ model OrderItem {
 }
 
 model StoreRequest {
-  id                 String             @id @default(cuid())
-  storeName          String
-  adminId            String
-  admin              User               @relation(fields: [adminId], references: [id])
-  status             StoreRequestStatus @default(PENDING)
-  storefrontType     StorefrontType     @default(DEFAULT)
-  enableToken        Boolean            @default(false)
-  customizationData  Json?              // { domain?, primaryColor?, secondaryColor?, logoUrl?, faviconUrl?, fontFamily? }
-  adminNotes         String?
-  rejectReason       String?
-  storeId            String?
-  store              Store?             @relation(fields: [storeId], references: [id], onDelete: SetNull)
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
+  id                        String             @id @default(cuid())
+  storeName                 String
+  adminId                   String
+  admin                     User               @relation(fields: [adminId], references: [id])
+  status                    StoreRequestStatus @default(PENDING)
+  storefrontType            StorefrontType     @default(DEFAULT)
+  enableToken               Boolean            @default(false)
+  customizationData         Json?              // { domain?, primaryColor?, secondaryColor?, logoUrl?, faviconUrl?, fontFamily? }
+  adminNotes                String?
+  rejectReason              String?
+  storeId                   String?
+  store                     Store?             @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  setupFeePaid              Boolean            @default(false)
+  setupFeePaymentIntentId   String?
+  stripeConnectAccountId    String?
+  connectOnboardingComplete Boolean            @default(false)
+  connectOnboardingUrl      String?
+  createdAt                 DateTime           @default(now())
+  updatedAt                 DateTime           @updatedAt
 }
 
 enum StoreRequestStatus {
   PENDING
   APPROVED
+  APPROVED_PENDING_PAYMENT
   REJECTED
 }
 

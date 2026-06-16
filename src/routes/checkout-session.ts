@@ -92,10 +92,16 @@ checkoutSession.post("/", async (c) => {
     })),
   })
 
+  const store = await getPrisma().store.findUnique({ where: { id: storeId } })
+  let applicationFeeAmount = 0
+  if (store?.stripeConnectAccountId && store?.connectOnboardingComplete) {
+    applicationFeeAmount = Math.round(total * 0.02) + 50
+  }
+
   let session
   try {
     const origin = c.req.header("Origin") || "http://localhost:5173"
-    session = await getStripe().checkout.sessions.create({
+    const sessionParams: any = {
       mode: "payment",
       line_items: items.map((item) => {
         const product = productMap.get(item.productId)!
@@ -114,7 +120,14 @@ checkoutSession.post("/", async (c) => {
       phone_number_collection: { enabled: true },
       success_url: `${origin}/account/orders?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/checkout`,
-    })
+    }
+    if (applicationFeeAmount > 0) {
+      sessionParams.payment_intent_data = {
+        application_fee_amount: applicationFeeAmount,
+        transfer_data: { destination: store!.stripeConnectAccountId! },
+      }
+    }
+    session = await getStripe().checkout.sessions.create(sessionParams)
   } catch {
     await getPrisma().order.delete({ where: { id: order.id } }).catch(() => {})
     return c.json({ error: "Erro ao processar pagamento" }, 500)

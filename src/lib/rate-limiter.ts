@@ -136,9 +136,13 @@ export async function uploadLimiter(c: Context, next: () => Promise<void>) {
 }
 
 export async function generalLimiter(c: Context, next: () => Promise<void>) {
+  const token = c.req.header("x-internal-token")
+  if (token && token === process.env.INTERNAL_API_TOKEN) {
+    return next()
+  }
   if (!_generalLimiter) {
     await getRedis()
-    _generalLimiter = makeLimiter(dynamicLimit(120, 30), "Muitas requisições. Tente novamente mais tarde.", "general")
+    _generalLimiter = makeLimiter(dynamicLimit(300, 120), "Muitas requisições. Tente novamente mais tarde.", "general")
   }
   return _generalLimiter(c, next)
 }

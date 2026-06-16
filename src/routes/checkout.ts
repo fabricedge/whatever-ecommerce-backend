@@ -96,14 +96,26 @@ checkout.post("/", async (c) => {
     })),
   })
 
+  // If store has Connect account, apply platform fee
+  const store = await getPrisma().store.findUnique({ where: { id: storeId } })
+  let applicationFeeAmount = 0
+  if (store?.stripeConnectAccountId && store?.connectOnboardingComplete) {
+    applicationFeeAmount = Math.round(total * 0.02) + 50
+  }
+
   let paymentIntent
   try {
-    paymentIntent = await getStripe().paymentIntents.create({
+    const piParams: any = {
       amount: total,
       currency: "brl",
       metadata: { orderId: order.id },
       automatic_payment_methods: { enabled: true },
-    })
+    }
+    if (applicationFeeAmount > 0) {
+      piParams.application_fee_amount = applicationFeeAmount
+      piParams.transfer_data = { destination: store!.stripeConnectAccountId! }
+    }
+    paymentIntent = await getStripe().paymentIntents.create(piParams)
   } catch {
     await getPrisma().order.delete({ where: { id: order.id } }).catch(() => {})
     return c.json({ error: "Erro ao processar pagamento" }, 500)

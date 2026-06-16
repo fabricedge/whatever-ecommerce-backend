@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { getStripe } from "../lib/stripe.js"
 import { getPrisma } from "../lib/prisma.js"
+import { tryActivateStore } from "./store-requests.js"
 import type Stripe from "stripe"
 
 const webhooks = new Hono()
@@ -64,9 +65,20 @@ webhooks.post("/stripe", async (c) => {
     return c.json({ error: "Invalid signature" }, 400)
   }
 
+  // ─── Setup fee payment for store requests ───
   if (event.type === "payment_intent.succeeded") {
-    const paymentIntent = event.data.object
-    const orderId = paymentIntent.metadata.orderId
+    const pi = event.data.object as Stripe.PaymentIntent
+
+    if (pi.metadata?.type === "setup_fee" && pi.metadata?.storeRequestId) {
+      const reqId = pi.metadata.storeRequestId
+      await getPrisma().storeRequest.update({
+        where: { id: reqId },
+        data: { setupFeePaid: true },
+      })
+      await tryActivateStore(reqId)
+    }
+
+    const orderId = pi.metadata?.orderId
     if (orderId) await fulfillOrder(orderId)
   }
 
@@ -76,6 +88,34 @@ webhooks.post("/stripe", async (c) => {
     if (orderId) {
       await saveShippingAddress(session)
       await fulfillOrder(orderId)
+    }
+  }
+
+  // ─── Connect account onboarding complete ───
+  if (event.type === "account.updated") {
+    const account = event.data.object as any
+
+    if (account.charges_enabled && account.payouts_enabled) {
+      const storeRequest = await getPrisma().storeRequest.findFirst({
+        where: { stripeConnectAccountId: account.id },
+      })
+      if (storeRequest) {
+        await getPrisma().storeRequest.update({
+          where: { id: storeRequest.id },
+          data: { connectOnboardingComplete: true },
+        })
+        await tryActivateStore(storeRequest.id)
+      }
+
+      const store = await getPrisma().store.findFirst({
+        where: { stripeConnectAccountId: account.id },
+      })
+      if (store) {
+        await getPrisma().store.update({
+          where: { id: store.id },
+          data: { connectOnboardingComplete: true },
+        })
+      }
     }
   }
 
