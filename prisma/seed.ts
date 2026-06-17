@@ -39,6 +39,14 @@ async function main() {
     console.log("Loja padrão criada: Minha Loja")
   }
 
+  let globalStore = await prisma.store.findUnique({ where: { id: "global" } })
+  if (!globalStore) {
+    globalStore = await prisma.store.create({
+      data: { id: "global", name: "Global", slug: "global" },
+    })
+    console.log("Loja global criada para configurações do sistema")
+  }
+
   const existingMembership = await prisma.userStore.findUnique({
     where: { userId_storeId: { userId: admin.id, storeId: defaultStore.id } },
   })

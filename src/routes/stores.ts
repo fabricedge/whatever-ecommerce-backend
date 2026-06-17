@@ -9,7 +9,10 @@ stores.get("/", authMiddleware, async (c) => {
   const user = getUser(c)
 
   if (user.role === "SUPER_ADMIN") {
-    const list = await getPrisma().store.findMany({ orderBy: { createdAt: "desc" } })
+    const list = await getPrisma().store.findMany({
+      where: { id: { not: "global" } },
+      orderBy: { createdAt: "desc" },
+    })
     return c.json({ stores: list })
   }
 
@@ -23,7 +26,7 @@ stores.get("/", authMiddleware, async (c) => {
 // Return first active DEFAULT store (public fallback for stfront.fskk.site)
 stores.get("/default", async (c) => {
   const store = await getPrisma().store.findFirst({
-    where: { isActive: true, storefrontType: "DEFAULT" },
+    where: { isActive: true, storefrontType: "DEFAULT", id: { not: "global" } },
     select: { id: true, name: true, slug: true },
     orderBy: { createdAt: "asc" },
   })
@@ -37,7 +40,7 @@ stores.get("/lookup", async (c) => {
   if (!domain) return c.json({ error: "domain query parameter is required" }, 400)
 
   const store = await getPrisma().store.findFirst({
-    where: { domain, isActive: true },
+    where: { domain, isActive: true, id: { not: "global" } },
   })
   if (!store) return c.json({ error: "No store found for this domain" }, 404)
 

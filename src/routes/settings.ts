@@ -42,6 +42,12 @@ settings.put("/multi-store", authMiddleware, async (c) => {
   const body = await c.req.json()
   const enabled = body.enabled === true
 
+  await getPrisma().store.upsert({
+    where: { id: "global" },
+    update: {},
+    create: { id: "global", name: "Global", slug: "global", isActive: true, storefrontType: "DEFAULT" },
+  })
+
   await getPrisma().setting.upsert({
     where: { storeId_key: { storeId: "global", key: "multi_store_enabled" } },
     update: { value: String(enabled) },
