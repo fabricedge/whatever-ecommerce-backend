@@ -123,7 +123,11 @@ orders.get("/stats", authMiddleware, adminMiddleware, async (c) => {
     }),
     getPrisma().order.count({ where: storeFilter }),
     getPrisma().product.count({ where: storeFilter }),
-    getPrisma().user.count({ where: { role: "CUSTOMER" } }),
+    getPrisma().order.groupBy({
+      by: ["userId"],
+      where: storeFilter,
+      _count: { userId: true },
+    }).then((groups) => groups.length),
   ])
 
   return c.json({
