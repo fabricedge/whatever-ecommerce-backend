@@ -22,11 +22,17 @@ export async function storeMiddleware(c: Context, next: Next) {
     }
     resolvedStoreId = store.id
   } else {
-    const defaultStore = await getPrisma().store.findFirst({
+    let defaultStore = await getPrisma().store.findFirst({
       where: { slug: "minha-loja" },
     })
     if (!defaultStore) {
-      return c.json({ error: "Default store not found" }, 500)
+      defaultStore = await getPrisma().store.findFirst({
+        where: { isActive: true },
+        orderBy: { createdAt: "asc" },
+      })
+    }
+    if (!defaultStore) {
+      return c.json({ error: "No store found" }, 500)
     }
     resolvedStoreId = defaultStore.id
   }
