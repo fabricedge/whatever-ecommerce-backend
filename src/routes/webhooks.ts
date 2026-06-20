@@ -89,6 +89,19 @@ webhooks.post("/stripe", async (c) => {
       await saveShippingAddress(session)
       await fulfillOrder(orderId)
     }
+
+    // Setup fee payment via Checkout Session
+    if (session.metadata?.type === "setup_fee" && session.metadata?.storeRequestId) {
+      const reqId = session.metadata.storeRequestId
+      const piId = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id
+      const updateData: any = { setupFeePaid: true }
+      if (piId) updateData.setupFeePaymentIntentId = piId
+      await getPrisma().storeRequest.update({
+        where: { id: reqId },
+        data: updateData,
+      })
+      await tryActivateStore(reqId)
+    }
   }
 
   // ─── Connect account onboarding complete ───
