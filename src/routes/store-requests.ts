@@ -13,24 +13,27 @@ const storeRequests = new Hono()
 async function tryActivateStore(requestId: string, force = false) {
   const req = await getPrisma().storeRequest.findUnique({ where: { id: requestId } })
   if (!req) return
-  if (req.status !== "APPROVED_PENDING_PAYMENT") return
-  if (!force && req.storefrontType === "INDEPENDENT" && !req.setupFeePaid) return
-  if (!force && !req.connectOnboardingComplete) return
+  if (req.status !== "APPROVED" && req.status !== "APPROVED_PENDING_PAYMENT") return
+
+  const cd = (req.customizationData as Record<string, any>) || {}
+  const hasCustomDomain = !!cd.domain?.trim()
+
+  if (!force && hasCustomDomain) {
+    if (!req.setupFeePaid) return
+    if (!req.connectOnboardingComplete) return
+  }
 
   const slug = req.storeName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "loja"
-  const cd = (req.customizationData as Record<string, any>) || {}
   const customDomain = cd.domain?.trim()
   const finalDomain = customDomain || `${slug}.fskk.site`
 
   let dnsRecordId: string | null = null
-  if (req.storefrontType === "INDEPENDENT") {
-    try {
-      const dns = await createDnsRecord(slug)
-      dnsRecordId = dns.id
-    } catch (err: any) {
-      console.error(`[tryActivateStore] DNS failed for ${requestId}:`, err.message)
-      return
-    }
+  try {
+    const dns = await createDnsRecord(slug)
+    dnsRecordId = dns.id
+  } catch (err: any) {
+    console.error(`[tryActivateStore] DNS failed for ${requestId}:`, err.message)
+    return
   }
 
   try {
@@ -38,7 +41,7 @@ async function tryActivateStore(requestId: string, force = false) {
       data: {
         name: req.storeName,
         slug,
-        storefrontType: req.storefrontType,
+        storefrontType: "INDEPENDENT",
         domain: finalDomain,
         stripeConnectAccountId: req.stripeConnectAccountId,
         connectOnboardingComplete: req.connectOnboardingComplete,
@@ -66,20 +69,16 @@ async function tryActivateStore(requestId: string, force = false) {
       )
     }
 
-    let rawToken: string | undefined
-    if (req.storefrontType === "INDEPENDENT") {
-      const result = await deployStorefront(store.id, slug, req.enableToken)
-      rawToken = result.rawToken
-      const tokenHash = rawToken ? hashSync(rawToken, 10) : null
-      await getPrisma().store.update({
-        where: { id: store.id },
-        data: {
-          deploymentUrl: result.url,
-          deploymentToken: tokenHash,
-          deploymentStatus: "READY",
-        },
-      })
-    }
+    const result = await deployStorefront(store.id, slug, req.enableToken)
+    const tokenHash = result.rawToken ? hashSync(result.rawToken, 10) : null
+    await getPrisma().store.update({
+      where: { id: store.id },
+      data: {
+        deploymentUrl: result.url,
+        deploymentToken: tokenHash,
+        deploymentStatus: "READY",
+      },
+    })
 
     await getPrisma().userStore.create({
       data: { userId: req.adminId, storeId: store.id },
@@ -111,68 +110,71 @@ storeRequests.post("/", authMiddleware, adminMiddleware, async (c) => {
     return c.json({ error: "You already have 3 pending requests. Wait for approval before submitting more." }, 429)
   }
 
+  const cd = (body.customizationData as Record<string, any>) || {}
+  const hasCustomDomain = !!cd.domain?.trim()
+
   const req = await getPrisma().storeRequest.create({
     data: {
       storeName,
       adminNotes: body.adminNotes?.trim() || null,
-      storefrontType: body.storefrontType === "INDEPENDENT" ? "INDEPENDENT" : "DEFAULT",
+      storefrontType: "INDEPENDENT",
       enableToken: body.enableToken === true,
       customizationData: body.customizationData || undefined,
       adminId: user.userId,
+      status: hasCustomDomain ? "PENDING" : "APPROVED",
     },
   })
 
-  // For INDEPENDENT, create Stripe Connect account + setup fee Checkout Session immediately
+  // Basic store (no custom domain) → auto-activate immediately
+  if (!hasCustomDomain) {
+    await tryActivateStore(req.id, true)
+    const activated = await getPrisma().storeRequest.findUnique({ where: { id: req.id } })
+    return c.json({ ...activated }, 201)
+  }
+
+  // Custom domain → create Connect account + setup fee Checkout Session
   let stripeConnectAccountId: string | null = null
   let connectOnboardingUrl: string | null = null
   let setupFeePaymentIntentId: string | null = null
   let paymentLink: string | null = null
 
-  if (req.storefrontType === "INDEPENDENT") {
-    const slug = storeName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "loja"
-    const cd = (body.customizationData as Record<string, any>) || {}
-    const customDomain = cd.domain?.trim()
-    const finalDomain = customDomain || `${slug}.fskk.site`
-    const adminUrl = process.env.PUBLIC_ADMIN_URL || "https://stadmin.fskk.site"
+  const slug = storeName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "loja"
+  const adminUrl = process.env.PUBLIC_ADMIN_URL || "https://stadmin.fskk.site"
+  const finalDomain = cd.domain.trim()
 
-    try {
-      const account = await createConnectedAccount(storeName, user.email, `https://${finalDomain}`)
-      stripeConnectAccountId = account.id
+  try {
+    const account = await createConnectedAccount(storeName, user.email, `https://${finalDomain}`)
+    stripeConnectAccountId = account.id
 
-      const refreshUrl = `${adminUrl}/admin/stores`
-      const returnUrl = `${adminUrl}/admin/stores`
-      const link = await createAccountLink(stripeConnectAccountId, refreshUrl, returnUrl)
-      connectOnboardingUrl = link.url
+    const refreshUrl = `${adminUrl}/admin/stores`
+    const returnUrl = `${adminUrl}/admin/stores`
+    const link = await createAccountLink(stripeConnectAccountId, refreshUrl, returnUrl)
+    connectOnboardingUrl = link.url
 
-      const stripe = getStripe()
-      const session = await stripe.checkout.sessions.create({
-        mode: "payment",
-        line_items: [{
-          price_data: {
-            currency: "brl",
-            product_data: { name: "Taxa de setup — Loja Independente" },
-            unit_amount: 300,
-          },
-          quantity: 1,
-        }],
-        metadata: { type: "setup_fee", storeRequestId: req.id },
-        success_url: `${adminUrl}/admin/stores?payment=success`,
-        cancel_url: `${adminUrl}/admin/stores?payment=cancel`,
-      })
-      setupFeePaymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id || null
-      paymentLink = session.url
-
-      await getPrisma().storeRequest.update({
-        where: { id: req.id },
-        data: {
-          stripeConnectAccountId,
-          connectOnboardingUrl,
-          setupFeePaymentIntentId,
+    const stripe = getStripe()
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: [{
+        price_data: {
+          currency: "brl",
+          product_data: { name: "Taxa de setup — Domínio Personalizado" },
+          unit_amount: 300,
         },
-      })
-    } catch (err: any) {
-      console.error(`[store-requests] Failed to create Connect/PaymentIntent for ${req.id}:`, err.message)
-    }
+        quantity: 1,
+      }],
+      metadata: { type: "setup_fee", storeRequestId: req.id },
+      success_url: `${adminUrl}/admin/stores?payment=success`,
+      cancel_url: `${adminUrl}/admin/stores?payment=cancel`,
+    })
+    setupFeePaymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id || null
+    paymentLink = session.url
+
+    await getPrisma().storeRequest.update({
+      where: { id: req.id },
+      data: { stripeConnectAccountId, connectOnboardingUrl, setupFeePaymentIntentId },
+    })
+  } catch (err: any) {
+    console.error(`[store-requests] Failed to create Connect/PaymentIntent for ${req.id}:`, err.message)
   }
 
   return c.json({
@@ -182,7 +184,7 @@ storeRequests.post("/", authMiddleware, adminMiddleware, async (c) => {
     setupFeePaymentIntentId,
     paymentIntentId: setupFeePaymentIntentId,
     paymentLink,
-    paymentAmountCents: req.storefrontType === "INDEPENDENT" ? 300 : undefined,
+    paymentAmountCents: 300,
   }, 201)
 })
 
@@ -232,13 +234,66 @@ storeRequests.get("/mine", authMiddleware, async (c) => {
     orderBy: { createdAt: "desc" },
   })
 
-  return c.json({ requests: list })
+  const enriched = list.map((r) => {
+    const cd = (r.customizationData as Record<string, any>) || {}
+    const hasCustomDomain = !!cd.domain?.trim()
+    return {
+      ...r,
+      paymentIntentId: r.setupFeePaymentIntentId,
+      paymentAmountCents: hasCustomDomain ? 300 : undefined,
+    }
+  })
+
+  return c.json({ requests: enriched })
+})
+
+// ─── Admin: generate a fresh payment link for a pending payment request ───
+storeRequests.post("/:id/generate-payment-link", authMiddleware, async (c) => {
+  const id = c.req.param("id")!
+  const req = await getPrisma().storeRequest.findUnique({ where: { id } })
+  if (!req) return c.json({ error: "Request not found" }, 404)
+  if (req.status !== "APPROVED_PENDING_PAYMENT") return c.json({ error: "Request is not pending payment" }, 400)
+
+  const cd = (req.customizationData as Record<string, any>) || {}
+  if (!cd.domain?.trim()) return c.json({ error: "No custom domain — no setup fee required" }, 400)
+
+  const adminUrl = process.env.PUBLIC_ADMIN_URL || "https://stadmin.fskk.site"
+
+  try {
+    const stripe = getStripe()
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: [{
+        price_data: {
+          currency: "brl",
+          product_data: { name: "Taxa de setup — Domínio Personalizado" },
+          unit_amount: 300,
+        },
+        quantity: 1,
+      }],
+      metadata: { type: "setup_fee", storeRequestId: req.id },
+      success_url: `${adminUrl}/admin/stores?payment=success`,
+      cancel_url: `${adminUrl}/admin/stores?payment=cancel`,
+    })
+
+    const piId = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id || null
+
+    await getPrisma().storeRequest.update({
+      where: { id: req.id },
+      data: { setupFeePaymentIntentId: piId },
+    })
+
+    return c.json({
+      paymentLink: session.url,
+      paymentIntentId: piId,
+      paymentAmountCents: 300,
+    })
+  } catch (err: any) {
+    return c.json({ error: `Failed to generate payment link: ${err.message}` }, 500)
+  }
 })
 
 // ─── Super admin: approve a request ───
-// For DEFAULT stores: creates Connect account + onboarding link (no setup fee)
-// For INDEPENDENT stores: Connect account + PaymentIntent already created at submit time,
-//   so just update status and try to activate
 storeRequests.put("/:id/approve", authMiddleware, async (c) => {
   const user = getUser(c)
   if (user.role !== "SUPER_ADMIN") return c.json({ error: "Forbidden" }, 403)
@@ -248,58 +303,74 @@ storeRequests.put("/:id/approve", authMiddleware, async (c) => {
   if (!storeRequest) return c.json({ error: "Request not found" }, 404)
   if (storeRequest.status !== "PENDING") return c.json({ error: "Request is already processed" }, 400)
 
-  // DEFAULT stores: create Connect account + onboarding link (no setup fee)
-  if (storeRequest.storefrontType === "DEFAULT") {
-    const cd = (storeRequest.customizationData as Record<string, any>) || {}
-    const customDomain = cd.domain?.trim()
-    const slug = storeRequest.storeName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "loja"
-    const finalDomain = customDomain || `${slug}.fskk.site`
+  const cd = (storeRequest.customizationData as Record<string, any>) || {}
+  const hasCustomDomain = !!cd.domain?.trim()
 
-    let stripeConnectAccountId = storeRequest.stripeConnectAccountId
-    let onboardingUrl: string | null = null
-
-    if (!stripeConnectAccountId) {
-      try {
-        const admin = await getPrisma().user.findUnique({ where: { id: storeRequest.adminId } })
-        const account = await createConnectedAccount(
-          storeRequest.storeName,
-          admin?.email || "admin@example.com",
-          `https://${finalDomain}`
-        )
-        stripeConnectAccountId = account.id
-      } catch (err: any) {
-        return c.json({ error: `Failed to create Stripe Connect account: ${err.message}` }, 500)
-      }
-    }
-
-    try {
-      const refreshUrl = `${process.env.PUBLIC_ADMIN_URL || "https://stadmin.fskk.site"}/superadmin/store-requests`
-      const returnUrl = `${process.env.PUBLIC_ADMIN_URL || "https://stadmin.fskk.site"}/superadmin/store-requests/${id}`
-      const link = await createAccountLink(stripeConnectAccountId, refreshUrl, returnUrl)
-      onboardingUrl = link.url
-    } catch (err: any) {
-      return c.json({ error: `Failed to create Connect onboarding link: ${err.message}` }, 500)
-    }
-
-    const updated = await getPrisma().storeRequest.update({
-      where: { id },
-      data: {
-        status: "APPROVED_PENDING_PAYMENT",
-        stripeConnectAccountId,
-        connectOnboardingUrl: onboardingUrl,
-      },
-    })
-
-    return c.json({
-      ...updated,
-      onboardingUrl,
-    })
+  // Basic requests (no custom domain) should never reach here — they auto-approve
+  if (!hasCustomDomain) {
+    await tryActivateStore(id, true)
+    const activated = await getPrisma().storeRequest.findUnique({ where: { id } })
+    return c.json({ ...activated })
   }
 
-  // INDEPENDENT stores: Connect account + PaymentIntent already created at submit time
+  // Custom domain: create Connect account + onboarding + checkout
+  let stripeConnectAccountId = storeRequest.stripeConnectAccountId
+  let onboardingUrl: string | null = null
+  let paymentLink: string | null = null
+  let piId: string | null = null
+
+  const adminUrl = process.env.PUBLIC_ADMIN_URL || "https://stadmin.fskk.site"
+  const finalDomain = cd.domain.trim()
+
+  if (!stripeConnectAccountId) {
+    try {
+      const admin = await getPrisma().user.findUnique({ where: { id: storeRequest.adminId } })
+      const account = await createConnectedAccount(
+        storeRequest.storeName,
+        admin?.email || "admin@example.com",
+        `https://${finalDomain}`
+      )
+      stripeConnectAccountId = account.id
+    } catch (err: any) {
+      return c.json({ error: `Failed to create Stripe Connect account: ${err.message}` }, 500)
+    }
+  }
+
+  try {
+    const refreshUrl = `${adminUrl}/admin/stores`
+    const returnUrl = `${adminUrl}/admin/stores`
+    const link = await createAccountLink(stripeConnectAccountId, refreshUrl, returnUrl)
+    onboardingUrl = link.url
+
+    const stripe = getStripe()
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: [{
+        price_data: {
+          currency: "brl",
+          product_data: { name: "Taxa de setup — Domínio Personalizado" },
+          unit_amount: 300,
+        },
+        quantity: 1,
+      }],
+      metadata: { type: "setup_fee", storeRequestId: id },
+      success_url: `${adminUrl}/admin/stores?payment=success`,
+      cancel_url: `${adminUrl}/admin/stores?payment=cancel`,
+    })
+    piId = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id || null
+    paymentLink = session.url
+  } catch (err: any) {
+    return c.json({ error: `Failed to create payment session: ${err.message}` }, 500)
+  }
+
   const updated = await getPrisma().storeRequest.update({
     where: { id },
-    data: { status: "APPROVED_PENDING_PAYMENT" },
+    data: {
+      status: "APPROVED_PENDING_PAYMENT",
+      stripeConnectAccountId,
+      connectOnboardingUrl: onboardingUrl,
+      setupFeePaymentIntentId: piId,
+    },
   })
 
   // Try to activate immediately (if payment + onboarding already done)
@@ -309,8 +380,9 @@ storeRequests.put("/:id/approve", authMiddleware, async (c) => {
 
   return c.json({
     ...(afterActivate || updated),
-    onboardingUrl: updated.connectOnboardingUrl,
-    paymentIntentId: updated.setupFeePaymentIntentId,
+    onboardingUrl,
+    paymentLink,
+    paymentIntentId: piId,
     paymentAmountCents: 300,
   })
 })
@@ -409,7 +481,6 @@ storeRequests.post("/:id/force-activate", authMiddleware, async (c) => {
   if (!req) return c.json({ error: "Request not found" }, 404)
   if (req.status !== "APPROVED_PENDING_PAYMENT") return c.json({ error: "Request is not in pending payment status" }, 400)
 
-  // Force activate — bypass billing checks
   await tryActivateStore(id, true)
 
   const updated = await getPrisma().storeRequest.findUnique({ where: { id } })
