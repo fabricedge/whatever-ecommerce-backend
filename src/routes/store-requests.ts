@@ -33,7 +33,6 @@ async function tryActivateStore(requestId: string, force = false) {
     dnsRecordId = dns.id
   } catch (err: any) {
     console.error(`[tryActivateStore] DNS failed for ${requestId}:`, err.message)
-    return
   }
 
   try {
