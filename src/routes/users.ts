@@ -21,7 +21,7 @@ users.get("/", authMiddleware, adminMiddleware, async (c) => {
   const [userList, count] = await Promise.all([
     getPrisma().user.findMany({
       where,
-      select: { id: true, email: true, name: true, role: true, createdAt: true },
+      select: { id: true, email: true, name: true, role: true, plan: true, createdAt: true },
       orderBy: { createdAt: "desc" },
       take: limit,
       skip: (page - 1) * limit,
@@ -39,7 +39,7 @@ users.get("/admins", authMiddleware, async (c) => {
 
   const adminList = await getPrisma().user.findMany({
     where: { role: { in: ["ADMIN", "SUPER_ADMIN"] } },
-    select: { id: true, email: true, name: true, role: true, createdAt: true },
+    select: { id: true, email: true, name: true, role: true, plan: true, createdAt: true },
     orderBy: { createdAt: "desc" },
   })
 
@@ -59,6 +59,7 @@ users.get("/admins", authMiddleware, async (c) => {
         email: a.email,
         name: a.name,
         role: a.role,
+        plan: a.plan,
         canCreateStores: a.role === "SUPER_ADMIN" ? true : canCreateSetting?.value === "true",
         storeCount,
         multiStoreEnabled,
@@ -74,7 +75,7 @@ users.get("/:id", authMiddleware, adminMiddleware, async (c) => {
 
   const user = await getPrisma().user.findUnique({
     where: { id },
-    select: { id: true, email: true, name: true, role: true, createdAt: true },
+    select: { id: true, email: true, name: true, role: true, plan: true, createdAt: true },
   })
 
   if (!user) return c.json({ error: "Not found" }, 404)
@@ -109,7 +110,29 @@ users.put("/:id/role", authMiddleware, adminMiddleware, async (c) => {
   const updated = await getPrisma().user.update({
     where: { id },
     data: { role },
-    select: { id: true, email: true, name: true, role: true, createdAt: true },
+    select: { id: true, email: true, name: true, role: true, plan: true, createdAt: true },
+  })
+
+  return c.json({ user: updated })
+})
+
+// Update user plan (SUPER_ADMIN only)
+users.put("/:id/plan", authMiddleware, async (c) => {
+  const user = getUser(c)
+  if (user.role !== "SUPER_ADMIN") return c.json({ error: "Forbidden" }, 403)
+
+  const id = c.req.param("id")!
+  const body = await c.req.json()
+  const { plan } = body
+
+  if (!["FREE", "MONTHLY", "CUSTOM"].includes(plan)) {
+    return c.json({ error: "Plano inválido. Use FREE, MONTHLY ou CUSTOM." }, 400)
+  }
+
+  const updated = await getPrisma().user.update({
+    where: { id },
+    data: { plan },
+    select: { id: true, email: true, name: true, role: true, plan: true },
   })
 
   return c.json({ user: updated })

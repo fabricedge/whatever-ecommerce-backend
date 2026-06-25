@@ -21,8 +21,27 @@ upload.post('/', authMiddleware, adminMiddleware, async (c) => {
     return c.json({ error: 'Arquivo muito grande. Máximo: 10MB' }, 400)
   }
 
+  const folder = c.req.query('folder') || 'products'
+  const compress = c.req.query('compress') === 'true'
+
+  let shouldCompress = false
+  if (compress && file.size > 5 * 1024 * 1024) {
+    const storeId = (c as any).get('storeId') as string | undefined
+    if (storeId) {
+      const store = await getPrisma().store.findUnique({
+        where: { id: storeId },
+        select: { plan: true },
+      })
+      if (store && store.plan !== 'FREE') {
+        shouldCompress = true
+      } else {
+        return c.json({ error: 'Compressão disponível apenas para planos pagos' }, 403)
+      }
+    }
+  }
+
   const buffer = Buffer.from(await file.arrayBuffer())
-  const result = await uploadFromBuffer(buffer, file.type)
+  const result = await uploadFromBuffer(buffer, file.type, folder, shouldCompress)
 
   const image = await getPrisma().image.create({
     data: {

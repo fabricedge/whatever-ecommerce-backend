@@ -116,7 +116,7 @@ checkoutSession.post("/", async (c) => {
       }),
       customer_email: email,
       metadata: { orderId: order.id },
-      shipping_address_collection: { allowed_countries: ["BR"] },
+      shipping_address_collection: { allowed_countries: ["BR", "US", "DE", "FR", "GB", "PT", "ES", "IT", "AR", "CL", "CO", "MX", "PY", "UY"] },
       phone_number_collection: { enabled: true },
       success_url: `${origin}/account/orders?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/checkout`,

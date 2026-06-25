@@ -34,6 +34,7 @@ async function main() {
       data: {
         name: "Minha Loja",
         slug: "minha-loja",
+        plan: "FREE",
       },
     })
     console.log("Loja padrão criada: Minha Loja")

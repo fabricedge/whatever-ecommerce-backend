@@ -50,6 +50,7 @@ async function saveShippingAddress(session: Stripe.Checkout.Session) {
       shippingCity: address.city || null,
       shippingState: address.state || null,
       shippingZip: address.postal_code || null,
+      shippingCountry: address.country || null,
     },
   })
 }

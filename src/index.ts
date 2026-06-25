@@ -26,8 +26,8 @@ app.use("*", cors({
 // Store middleware scopes requests to a store (default: "minha-loja" if no X-Store-Id)
 app.use("*", storeMiddleware)
 
-// Rate limiting
-app.use("*", generalLimiter)
+// Rate limiting (mutations only — GET is unlimited)
+app.on(["POST", "PUT", "DELETE", "PATCH"], "*", generalLimiter)
 app.use("/api/auth/*", authLimiter)
 app.use("/api/upload*", uploadLimiter)
 

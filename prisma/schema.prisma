@@ -10,6 +10,7 @@ model Product {
   id          String   @id @default(cuid())
   name        String
   slug        String   @unique
+  sku         String?
   description String
   price       Int
   images      String[]
@@ -26,12 +27,13 @@ model Product {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String     @id @default(cuid())
+  email        String     @unique
   name         String?
   passwordHash String?
-  role         Role     @default(CUSTOMER)
-  createdAt    DateTime @default(now())
+  role         Role       @default(CUSTOMER)
+  plan         StorePlan  @default(FREE)
+  createdAt    DateTime   @default(now())
 
   stores        UserStore[]
   storeRequests StoreRequest[]
@@ -52,6 +54,7 @@ model Store {
   name                      String
   slug                      String             @unique
   domain                    String?            @unique
+  plan                      StorePlan          @default(FREE)
   isActive                  Boolean            @default(true)
   storefrontType            StorefrontType     @default(DEFAULT)
   deploymentUrl             String?
@@ -139,12 +142,17 @@ model Order {
   shippingCity          String?
   shippingState         String?
   shippingZip           String?
+  shippingCountry       String?
   createdAt             DateTime    @default(now())
 
   trackingCode          String?
   shippingLabelB64      String?
+  shippingLabelUrl      String?
   shippingProduct       String?
+  carrier               String?
+  serviceLevel          String?
   shippingPrice         Int?
+  easyshipShipmentId    String?
   shippingWeight        Float?
   shippingLength        Int?
   shippingWidth         Int?
@@ -239,6 +247,12 @@ enum StoreRequestStatus {
   APPROVED
   APPROVED_PENDING_PAYMENT
   REJECTED
+}
+
+enum StorePlan {
+  FREE
+  MONTHLY
+  CUSTOM
 }
 
 enum StorefrontType {

@@ -6,6 +6,7 @@ import { deployStorefront } from "../services/vercel.js"
 import { createDnsRecord, deleteDnsRecord } from "../services/cloudflare.js"
 import { createConnectedAccount, createAccountLink } from "../services/stripe-connect.js"
 import { getStripe } from "../lib/stripe.js"
+import { checkDeployment, buildStoreUrl } from "../lib/deployment.js"
 
 const storeRequests = new Hono()
 
@@ -75,7 +76,7 @@ async function tryActivateStore(requestId: string, force = false) {
       data: {
         deploymentUrl: result.url,
         deploymentToken: tokenHash,
-        deploymentStatus: "READY",
+        deploymentStatus: result.status,
       },
     })
 
@@ -87,6 +88,25 @@ async function tryActivateStore(requestId: string, force = false) {
       where: { id: requestId },
       data: { status: "APPROVED", storeId: store.id },
     })
+
+    // Try health check (non-blocking, with retries)
+    ;(async () => {
+      for (let i = 0; i < 3; i++) {
+        await new Promise(r => setTimeout(r, 5000))
+        const status = await checkDeployment(buildStoreUrl(slug))
+        if (status === 'READY') {
+          await getPrisma().store.update({
+            where: { id: store.id },
+            data: { deploymentStatus: 'READY' },
+          })
+          return
+        }
+      }
+      await getPrisma().store.update({
+        where: { id: store.id },
+        data: { deploymentStatus: 'FAILED' },
+      })
+    })()
   } catch (err: any) {
     console.error(`[tryActivateStore] creation failed for ${requestId}:`, err.message)
     if (dnsRecordId) {
@@ -101,6 +121,26 @@ storeRequests.post("/", authMiddleware, adminMiddleware, async (c) => {
   const body = await c.req.json()
   const storeName: string = body.storeName?.trim()
   if (!storeName) return c.json({ error: "storeName is required" }, 400)
+
+  // Check store limit by user plan
+  const myUser = await getPrisma().user.findUnique({
+    where: { id: user.userId },
+    select: { plan: true },
+  })
+
+  const storeCount = await getPrisma().userStore.count({ where: { userId: user.userId } })
+  const plan = myUser?.plan || "FREE"
+
+  const limits: Record<string, number | null> = { FREE: 3, MONTHLY: 10, CUSTOM: null }
+  const limit = limits[plan]
+
+  if (limit !== null && storeCount >= limit) {
+    return c.json({
+      error: plan === "FREE"
+        ? `Você atingiu o limite de ${limit} lojas no plano Grátis. Faça upgrade para o plano Mensal ($29/mês) para criar mais lojas.`
+        : `Você atingiu o limite de ${limit} lojas no plano Mensal. Contate o suporte para criar mais lojas.`,
+    }, 403)
+  }
 
   const pending = await getPrisma().storeRequest.count({
     where: { adminId: user.userId, status: "PENDING" },
@@ -487,6 +527,30 @@ storeRequests.post("/:id/force-activate", authMiddleware, async (c) => {
     return c.json({ success: true, status: "APPROVED" })
   }
   return c.json({ success: false, status: updated?.status })
+})
+
+// ─── Check deployment status ───
+storeRequests.post("/:id/check-deployment", authMiddleware, async (c) => {
+  const user = getUser(c)
+  if (user.role !== "SUPER_ADMIN") return c.json({ error: "Forbidden" }, 403)
+
+  const id = c.req.param("id")!
+  const req = await getPrisma().storeRequest.findUnique({ where: { id } })
+  if (!req) return c.json({ error: "Request not found" }, 404)
+  if (!req.storeId) return c.json({ error: "Store not yet created for this request" }, 400)
+
+  const store = await getPrisma().store.findUnique({ where: { id: req.storeId } })
+  if (!store) return c.json({ error: "Store not found" }, 404)
+
+  const url = store.deploymentUrl || buildStoreUrl(store.slug)
+  const status = await checkDeployment(url)
+
+  await getPrisma().store.update({
+    where: { id: store.id },
+    data: { deploymentStatus: status },
+  })
+
+  return c.json({ deploymentUrl: url, deploymentStatus: status })
 })
 
 export { tryActivateStore }

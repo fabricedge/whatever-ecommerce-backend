@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { getPrisma } from "../lib/prisma.js"
 import { authMiddleware, adminMiddleware, getUser } from "../lib/auth-middleware.js"
+import { checkDeployment, buildStoreUrl } from "../lib/deployment.js"
 
 const stores = new Hono()
 
@@ -40,11 +41,24 @@ stores.get("/lookup", async (c) => {
   if (!domain) return c.json({ error: "domain query parameter is required" }, 400)
 
   const store = await getPrisma().store.findFirst({
-    where: { domain, isActive: true, id: { not: "global" } },
+    where: { domain, id: { not: "global" } },
   })
   if (!store) return c.json({ error: "No store found for this domain" }, 404)
 
-  return c.json({ id: store.id, name: store.name, slug: store.slug })
+  return c.json({ id: store.id, name: store.name, slug: store.slug, isActive: store.isActive })
+})
+
+// Get current user's plan and store usage
+stores.get("/my-usage", authMiddleware, async (c) => {
+  const user = getUser(c)
+  const myUser = await getPrisma().user.findUnique({
+    where: { id: user.userId },
+    select: { plan: true },
+  })
+  const storeCount = await getPrisma().userStore.count({ where: { userId: user.userId } })
+  const plan = myUser?.plan || "FREE"
+  const limits: Record<string, number | null> = { FREE: 3, MONTHLY: 10, CUSTOM: null }
+  return c.json({ plan, storeCount, limit: limits[plan] })
 })
 
 // Get single store
@@ -213,6 +227,32 @@ stores.put("/:id/branding", authMiddleware, async (c) => {
   )
 
   return c.json({ success: true })
+})
+
+// Check deployment status for a store
+stores.post("/:id/check-deployment", authMiddleware, async (c) => {
+  const user = getUser(c)
+  const id = c.req.param("id")!
+
+  const store = await getPrisma().store.findUnique({ where: { id } })
+  if (!store) return c.json({ error: "Store not found" }, 404)
+
+  if (user.role !== "SUPER_ADMIN") {
+    const membership = await getPrisma().userStore.findUnique({
+      where: { userId_storeId: { userId: user.userId, storeId: id } },
+    })
+    if (!membership) return c.json({ error: "Forbidden" }, 403)
+  }
+
+  const url = store.deploymentUrl || buildStoreUrl(store.slug)
+  const status = await checkDeployment(url)
+
+  await getPrisma().store.update({
+    where: { id },
+    data: { deploymentStatus: status },
+  })
+
+  return c.json({ deploymentUrl: url, deploymentStatus: status })
 })
 
 export default stores

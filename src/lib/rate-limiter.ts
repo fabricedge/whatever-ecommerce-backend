@@ -54,12 +54,15 @@ class UpstashRedisStore implements Store {
       return { totalHits: 1, resetTime }
     }
 
-    const [count] = await r.multi()
-      .incr(this.prefixKey(key))
-      .expire(this.prefixKey(key), Math.ceil(this.windowMs / 1000))
-      .exec()
-
-    return { totalHits: count as number, resetTime }
+    try {
+      const [count] = await r.multi()
+        .incr(this.prefixKey(key))
+        .expire(this.prefixKey(key), Math.ceil(this.windowMs / 1000))
+        .exec()
+      return { totalHits: count as number, resetTime }
+    } catch {
+      return { totalHits: 1, resetTime }
+    }
   }
 
   async decrement(key: string): Promise<void> {
@@ -122,7 +125,7 @@ let _generalLimiter: MiddlewareHandler | null = null
 export async function authLimiter(c: Context, next: () => Promise<void>) {
   if (!_authLimiter) {
     await getRedis()
-    _authLimiter = makeLimiter(dynamicLimit(60, 15), "Muitas tentativas de autenticação. Tente novamente em 1 minuto.", "auth")
+    _authLimiter = makeLimiter(dynamicLimit(20, 5), "Muitas tentativas de autenticação. Tente novamente em 1 minuto.", "auth")
   }
   return _authLimiter(c, next)
 }
@@ -130,7 +133,7 @@ export async function authLimiter(c: Context, next: () => Promise<void>) {
 export async function uploadLimiter(c: Context, next: () => Promise<void>) {
   if (!_uploadLimiter) {
     await getRedis()
-    _uploadLimiter = makeLimiter(10, "Limite de uploads atingido. Tente novamente em 1 minuto.", "upload")
+    _uploadLimiter = makeLimiter(6, "Limite de uploads atingido. Tente novamente em 1 minuto.", "upload")
   }
   return _uploadLimiter(c, next)
 }
@@ -142,7 +145,7 @@ export async function generalLimiter(c: Context, next: () => Promise<void>) {
   }
   if (!_generalLimiter) {
     await getRedis()
-    _generalLimiter = makeLimiter(dynamicLimit(300, 120), "Muitas requisições. Tente novamente mais tarde.", "general")
+    _generalLimiter = makeLimiter(dynamicLimit(60, 30), "Muitas requisições. Tente novamente mais tarde.", "general")
   }
   return _generalLimiter(c, next)
 }

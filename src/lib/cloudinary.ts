@@ -24,13 +24,17 @@ export type UploadResult = {
 export async function uploadFromBuffer(
   buffer: Buffer,
   mimeType: string,
-  folder?: string
+  folder?: string,
+  compress?: boolean,
 ): Promise<UploadResult> {
   ensureConfig()
   const b64 = buffer.toString('base64')
-  const result = await cloudinary.uploader.upload(`data:${mimeType};base64,${b64}`, {
-    folder: folder || 'products',
-  })
+  const uploadOpts: Record<string, any> = { folder: folder || 'products' }
+  if (compress) {
+    uploadOpts.quality = 'auto'
+    uploadOpts.fetch_format = 'auto'
+  }
+  const result = await cloudinary.uploader.upload(`data:${mimeType};base64,${b64}`, uploadOpts)
   return {
     publicId: result.public_id,
     url: result.secure_url,

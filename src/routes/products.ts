@@ -52,6 +52,7 @@ products.get("/", async (c) => {
     where.OR = [
       { name: { contains: search, mode: "insensitive" } },
       { category: { contains: search, mode: "insensitive" } },
+      { sku: { contains: search, mode: "insensitive" } },
     ]
   }
 
@@ -80,6 +81,7 @@ products.post("/", authMiddleware, adminMiddleware, async (c) => {
     data: {
       name: body.name,
       slug,
+      sku: body.sku || null,
       description: body.description || "",
       price: Math.round(body.price * 100),
       images: body.images || [],
@@ -101,6 +103,7 @@ products.put("/:id", authMiddleware, adminMiddleware, async (c) => {
     where: { id, storeId },
     data: {
       name: body.name,
+      sku: body.sku,
       description: body.description,
       price: body.price ? Math.round(body.price * 100) : undefined,
       images: body.images,
