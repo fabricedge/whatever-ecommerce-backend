@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { getPrisma } from "../lib/prisma.js"
 import { authMiddleware, adminMiddleware, getUser } from "../lib/auth-middleware.js"
+import { logAudit } from "../lib/audit-log.js"
 
 const users = new Hono()
 
@@ -107,10 +108,21 @@ users.put("/:id/role", authMiddleware, adminMiddleware, async (c) => {
     return c.json({ error: "Role inválida" }, 400)
   }
 
+  const before = await getPrisma().user.findUnique({
+    where: { id },
+    select: { role: true },
+  })
+
   const updated = await getPrisma().user.update({
     where: { id },
     data: { role },
     select: { id: true, email: true, name: true, role: true, plan: true, createdAt: true },
+  })
+
+  await logAudit(c, "user.role.update", "User", id, {
+    before: { role: before?.role },
+    after: { role: updated.role },
+    description: `Role alterado de ${before?.role} para ${updated.role}`,
   })
 
   return c.json({ user: updated })
@@ -129,10 +141,21 @@ users.put("/:id/plan", authMiddleware, async (c) => {
     return c.json({ error: "Plano inválido. Use FREE, MONTHLY ou CUSTOM." }, 400)
   }
 
+  const before = await getPrisma().user.findUnique({
+    where: { id },
+    select: { plan: true },
+  })
+
   const updated = await getPrisma().user.update({
     where: { id },
     data: { plan },
     select: { id: true, email: true, name: true, role: true, plan: true },
+  })
+
+  await logAudit(c, "user.plan.update", "User", id, {
+    before: { plan: before?.plan },
+    after: { plan: updated.plan },
+    description: `Plano alterado de ${before?.plan} para ${updated.plan}`,
   })
 
   return c.json({ user: updated })
@@ -161,6 +184,11 @@ users.put("/:id/store-permission", authMiddleware, async (c) => {
     where: { storeId_key: { storeId: "global", key: `user:${id}:can_create_stores` } },
     update: { value: String(canCreate) },
     create: { storeId: "global", key: `user:${id}:can_create_stores`, value: String(canCreate) },
+  })
+
+  await logAudit(c, "user.store-permission.toggle", "User", id, {
+    canCreateStores: canCreate,
+    description: `Permissão de criar lojas ${canCreate ? "ativada" : "desativada"}`,
   })
 
   return c.json({ canCreateStores: canCreate })

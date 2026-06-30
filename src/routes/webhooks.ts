@@ -105,34 +105,6 @@ webhooks.post("/stripe", async (c) => {
     }
   }
 
-  // ─── Connect account onboarding complete ───
-  if (event.type === "account.updated") {
-    const account = event.data.object as any
-
-    if (account.charges_enabled && account.payouts_enabled) {
-      const storeRequest = await getPrisma().storeRequest.findFirst({
-        where: { stripeConnectAccountId: account.id },
-      })
-      if (storeRequest) {
-        await getPrisma().storeRequest.update({
-          where: { id: storeRequest.id },
-          data: { connectOnboardingComplete: true },
-        })
-        await tryActivateStore(storeRequest.id)
-      }
-
-      const store = await getPrisma().store.findFirst({
-        where: { stripeConnectAccountId: account.id },
-      })
-      if (store) {
-        await getPrisma().store.update({
-          where: { id: store.id },
-          data: { connectOnboardingComplete: true },
-        })
-      }
-    }
-  }
-
   return c.json({ received: true })
 })
 

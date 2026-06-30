@@ -158,7 +158,22 @@ orders.get("/:id", authMiddleware, async (c) => {
   })
 
   if (!order) return c.json({ error: "Not found" }, 404)
-  return c.json(order)
+
+  const originSettings = await getPrisma().setting.findMany({
+    where: { storeId, key: { in: ['origin_zip', 'origin_city', 'origin_state', 'origin_country'] } },
+  })
+  const originMap: Record<string, string> = {}
+  for (const s of originSettings) originMap[s.key] = s.value
+
+  return c.json({
+    ...order,
+    originAddress: {
+      zip: originMap.origin_zip || '',
+      city: originMap.origin_city || '',
+      state: originMap.origin_state || '',
+      country: originMap.origin_country || 'US',
+    },
+  })
 })
 
 orders.put("/:id/status", authMiddleware, adminMiddleware, async (c) => {

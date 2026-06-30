@@ -1,11 +1,20 @@
 import { getPrisma } from './prisma.js'
+import { decrypt } from './encryption.js'
 
-const EASYSHIP_API_URL = (process.env.EASYSHIP_API_URL || 'https://api.easyship.com').replace(/\/+$/, '')
-const GLOBAL_CLIENT_ID = process.env.EASYSHIP_CLIENT_ID || ''
-const GLOBAL_CLIENT_SECRET = process.env.EASYSHIP_CLIENT_SECRET || ''
+// ATENÇÃO: EasyShip atualmente configurado apenas para rotas domésticas nos EUA.
+// Para suporte Brasil (BR-BR), é necessário:
+//   1. Token de produção EasyShip (prefixo prod_) com rotas BR ativadas
+//   2. Trocar defaults "US" para "BR" em: shipping.ts, cart/+page.svelte, checkout-session.ts
+//   3. Atualizar origin_country e CEP de origem nas settings do admin
+
+const EASYSHIP_OAUTH_URL = 'https://enterprise-api.easyship.com/oauth2/token'
 
 type TokenEntry = { accessToken: string; expiresAt: number }
 const tokenCache = new Map<string, TokenEntry>()
+
+type Credentials =
+  | { apiToken: string }
+  | { clientId: string; clientSecret: string }
 
 export interface EasyshipAddressInput {
   name: string
@@ -27,6 +36,14 @@ export interface EasyshipParcelInput {
   distanceUnit: 'cm' | 'in'
   weight: number
   massUnit: 'kg' | 'lb'
+}
+
+export interface EasyshipRateItem {
+  actualWeight: number
+  category?: string
+  hsCode?: string
+  declaredCurrency: string
+  declaredCustomsValue: number
 }
 
 export interface EasyshipRate {
@@ -64,66 +81,66 @@ export interface EasyshipTrackingResult {
   error?: string
 }
 
-async function getCredentials(storeId?: string) {
-  if (storeId) {
-    try {
-      const settings = await getPrisma().setting.findMany({
-        where: {
-          storeId,
-          key: { in: ['easyship_client_id', 'easyship_client_secret'] },
-        },
-      })
-      const map: Record<string, string> = {}
-      for (const s of settings) map[s.key] = s.value
-      if (map.easyship_client_id && map.easyship_client_secret) {
-        return {
-          clientId: map.easyship_client_id,
-          clientSecret: map.easyship_client_secret,
-        }
-      }
-    } catch {
-      // DB unavailable — fall through to global
+function getPublicApiUrl(tokenHint?: string): string {
+  if (tokenHint?.startsWith('sand_')) return 'https://public-api-sandbox.easyship.com'
+  const envUrl = process.env.EASYSHIP_API_URL
+  if (envUrl) return envUrl.replace(/\/+$/, '')
+  return 'https://public-api.easyship.com'
+}
+
+async function getCredentials(storeId: string): Promise<Credentials> {
+  const settings = await getPrisma().setting.findMany({
+    where: {
+      storeId,
+      key: { in: ['easyship_client_id', 'easyship_client_secret', 'easyship_api_token'] },
+    },
+  })
+  const map: Record<string, string> = {}
+  for (const s of settings) map[s.key] = s.value
+
+  if (map.easyship_api_token) {
+    return { apiToken: decrypt(map.easyship_api_token) }
+  }
+
+  if (map.easyship_client_id && map.easyship_client_secret) {
+    return {
+      clientId: decrypt(map.easyship_client_id),
+      clientSecret: decrypt(map.easyship_client_secret),
     }
   }
-  return { clientId: GLOBAL_CLIENT_ID, clientSecret: GLOBAL_CLIENT_SECRET }
+
+  throw new Error('EasyShip não configurado para esta loja. Configure easyship_api_token ou easyship_client_id + easyship_client_secret em Configurações.')
 }
 
-export async function isConfigured(storeId?: string): Promise<boolean> {
-  const creds = await getCredentials(storeId)
-  return !!creds.clientId && !!creds.clientSecret
-}
-
-export async function hasOwnCredentials(storeId: string): Promise<boolean> {
-  if (!storeId) return false
+export async function isConfigured(storeId: string): Promise<boolean> {
   try {
-    const settings = await getPrisma().setting.findMany({
-      where: {
-        storeId,
-        key: { in: ['easyship_client_id', 'easyship_client_secret'] },
-      },
-    })
-    const map: Record<string, string> = {}
-    for (const s of settings) map[s.key] = s.value
-    return !!map.easyship_client_id && !!map.easyship_client_secret
+    const creds = await getCredentials(storeId)
+    return 'apiToken' in creds
+      ? !!creds.apiToken
+      : !!creds.clientId && !!creds.clientSecret
   } catch {
     return false
   }
 }
 
-function cacheKey(storeId?: string): string {
-  return storeId || '_global_'
+export async function hasOwnCredentials(storeId: string): Promise<boolean> {
+  return isConfigured(storeId)
 }
 
-async function getAccessToken(storeId?: string): Promise<string> {
-  const key = cacheKey(storeId)
+async function getAccessToken(storeId: string): Promise<string> {
+  const creds = await getCredentials(storeId)
+
+  if ('apiToken' in creds) {
+    return creds.apiToken
+  }
+
+  const key = storeId
   const cached = tokenCache.get(key)
   if (cached && Date.now() < cached.expiresAt) {
     return cached.accessToken
   }
 
-  const creds = await getCredentials(storeId)
-
-  const res = await fetch(`${EASYSHIP_API_URL}/oauth/token`, {
+  const res = await fetch(EASYSHIP_OAUTH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -153,10 +170,12 @@ async function getAccessToken(storeId?: string): Promise<string> {
 async function easyshipFetch(
   path: string,
   options: RequestInit = {},
-  storeId?: string,
+  storeId: string,
 ): Promise<any> {
-  const token = await getAccessToken(storeId)
-  const url = `${EASYSHIP_API_URL}${path}`
+  const creds = await getCredentials(storeId)
+  const token = 'apiToken' in creds ? creds.apiToken : await getAccessToken(storeId)
+  const baseUrl = getPublicApiUrl('apiToken' in creds ? creds.apiToken : undefined)
+  const url = `${baseUrl}${path}`
   const res = await fetch(url, {
     ...options,
     headers: {
@@ -184,11 +203,11 @@ async function easyshipFetch(
 function toEasyshipAddress(addr: EasyshipAddressInput) {
   return {
     country_alpha2: addr.country,
-    city: addr.city,
-    state: addr.state,
-    zip: addr.zip,
-    street: addr.street1,
-    contact_name: addr.name,
+    city: addr.city || "Destino",
+    state: addr.state || undefined,
+    postal_code: addr.zip,
+    street: addr.street1 || undefined,
+    contact_name: addr.name || undefined,
     company_name: addr.company || undefined,
     phone: addr.phone || undefined,
     email: addr.email || undefined,
@@ -199,27 +218,46 @@ export async function getRates(
   addressFrom: EasyshipAddressInput,
   addressTo: EasyshipAddressInput,
   parcel: EasyshipParcelInput,
-  storeId?: string,
+  storeId: string,
+  items?: EasyshipRateItem[],
 ): Promise<{ rates: EasyshipRate[]; error?: string }> {
   try {
+    const rateItems = items && items.length > 0
+      ? items
+      : [{
+          actualWeight: parcel.weight,
+          hsCode: '847130',
+          declaredCurrency: 'USD',
+          declaredCustomsValue: 5000,
+        }]
+
+    const rawBody = {
+      origin_address: toEasyshipAddress(addressFrom),
+      destination_address: toEasyshipAddress(addressTo),
+      parcels: [
+        {
+          total_actual_weight: parcel.weight,
+          box: {
+            length: parcel.length,
+            width: parcel.width,
+            height: parcel.height,
+          },
+          items: rateItems.map((i) => ({
+            actual_weight: i.actualWeight,
+            ...(i.hsCode ? { hs_code: i.hsCode } : {}),
+            ...(i.category ? { category: i.category } : {}),
+            declared_currency: i.declaredCurrency,
+            declared_customs_value: i.declaredCustomsValue,
+          })),
+        },
+      ],
+    }
+    const body = JSON.stringify(rawBody)
     const response = await easyshipFetch(
       '/2024-09/rates',
       {
         method: 'POST',
-        body: JSON.stringify({
-          origin_address: toEasyshipAddress(addressFrom),
-          destination_address: toEasyshipAddress(addressTo),
-          parcels: [
-            {
-              box: {
-                length: parcel.length,
-                width: parcel.width,
-                height: parcel.height,
-                weight: parcel.weight,
-              },
-            },
-          ],
-        }),
+        body,
       },
       storeId,
     )
@@ -230,7 +268,7 @@ export async function getRates(
         r.courier_service?.umbrella_name || r.courier_service?.name || '',
       serviceLevelName: r.courier_service?.name || '',
       serviceLevelToken: '',
-      amount: (r.total_charge || r.shipment_charge_total || 0) / 100,
+      amount: (r.total_charge || r.shipment_charge_total || 0),
       currency: r.currency || 'USD',
       estimatedDays:
         r.min_delivery_time != null
@@ -249,13 +287,13 @@ export async function createLabel(
   destination: EasyshipAddressInput,
   parcel: EasyshipParcelInput,
   courierServiceId: string,
+  storeId: string,
   items?: {
     description: string
     quantity: number
     price: number
     currency: string
   }[],
-  storeId?: string,
 ): Promise<EasyshipLabelResult> {
   try {
     const shipmentBody: any = {
@@ -326,9 +364,35 @@ export async function createLabel(
   }
 }
 
+export async function checkConnection(
+  storeId: string,
+): Promise<{ status: string; message: string }> {
+  try {
+    const creds = await getCredentials(storeId)
+    const token = 'apiToken' in creds ? creds.apiToken : await getAccessToken(storeId)
+    const baseUrl = getPublicApiUrl('apiToken' in creds ? creds.apiToken : undefined)
+    const res = await fetch(`${baseUrl}/2024-09/account`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    })
+    if (res.ok) {
+      return { status: 'ok', message: 'Conectado à EasyShip' }
+    }
+    if (res.status === 403) {
+      const body = await res.json().catch(() => ({}))
+      if (body?.error?.code === 'usage_limit') {
+        return { status: 'usage_limit', message: 'Limite de uso excedido. Aguarde alguns minutos.' }
+      }
+      return { status: 'error', message: `HTTP ${res.status}: ${body?.error?.message || res.statusText}` }
+    }
+    return { status: 'error', message: `HTTP ${res.status}: ${res.statusText}` }
+  } catch (err: any) {
+    return { status: 'error', message: err.message }
+  }
+}
+
 export async function trackShipment(
   shipmentId: string,
-  storeId?: string,
+  storeId: string,
 ): Promise<EasyshipTrackingResult> {
   try {
     const response = await easyshipFetch(

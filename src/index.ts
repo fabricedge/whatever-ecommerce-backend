@@ -13,6 +13,9 @@ import stores from "./routes/stores.js"
 import storeRequests from "./routes/store-requests.js"
 import shipping from "./routes/shipping.js"
 import upload from "./routes/upload.js"
+import pages from "./routes/pages.js"
+import auditLogs from "./routes/audit-logs.js"
+import categories from "./routes/categories.js"
 import { storeMiddleware } from "./lib/store-middleware.js"
 import { generalLimiter, authLimiter, uploadLimiter } from "./lib/rate-limiter.js"
 
@@ -44,6 +47,9 @@ app.route("/api/stores", stores)
 app.route("/api/store-requests", storeRequests)
 app.route("/api/shipping", shipping)
 app.route("/api/upload", upload)
+app.route("/api/pages", pages)
+app.route("/api/audit-logs", auditLogs)
+app.route("/api/categories", categories)
 
 app.onError((err, c) => {
   console.error("Unhandled error:", err)

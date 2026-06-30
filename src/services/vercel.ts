@@ -32,8 +32,9 @@ async function vercelFetch(path: string, options: RequestInit = {}) {
 export async function deployStorefront(
   storeId: string,
   slug: string,
-  enableToken: boolean = false
-): Promise<{ url: string; rawToken?: string; status: 'DEPLOYING' | 'READY' }> {
+  enableToken: boolean = false,
+  customDomain?: string
+): Promise<{ url: string; rawToken?: string; status: 'DEPLOYING' | 'READY' | 'FAILED'; error?: string }> {
   let rawToken: string | undefined
   if (enableToken) {
     rawToken = generateToken(6)
@@ -52,13 +53,13 @@ export async function deployStorefront(
     }
   } catch (err: any) {
     console.error(`[deployStorefront] failed to find project ${STOREFRONT_PROJECT()}:`, err.message)
-    return { url: `https://${domain}`, rawToken, status: 'DEPLOYING' }
+    return { url: `https://${domain}`, rawToken, status: 'FAILED', error: `Vercel project not found: ${err.message}` }
   }
 
   const projectId = project.id || project.projectId
   if (!projectId) {
     console.error(`[deployStorefront] no project id for ${STOREFRONT_PROJECT()}`)
-    return { url: `https://${domain}`, rawToken, status: 'DEPLOYING' }
+    return { url: `https://${domain}`, rawToken, status: 'FAILED', error: 'Vercel project ID not found' }
   }
 
   // Add domain alias to the storefront project
@@ -75,8 +76,40 @@ export async function deployStorefront(
     }
   }
 
+  // Add custom domain alias if provided
+  if (customDomain) {
+    try {
+      await vercelFetch(`/v9/projects/${projectId}/domains`, {
+        method: "POST",
+        body: JSON.stringify({ name: customDomain }),
+      })
+      console.log(`[deployStorefront] custom domain ${customDomain} added to project ${STOREFRONT_PROJECT()}`)
+    } catch (err: any) {
+      if (!err.message?.includes("already exists")) {
+        console.error(`[deployStorefront] failed to add custom domain ${customDomain}:`, err.message)
+      }
+    }
+  }
+
+  // Trigger a production deployment so the new domain aliases take effect
+  try {
+    const latestDeployments = await vercelFetch(`/v6/deployments?projectId=${projectId}&target=production&limit=1&rollback=0`)
+    const latestDeploy = latestDeployments.deployments?.[0]
+    if (latestDeploy?.uid) {
+      await vercelFetch(`/v1/deployments`, {
+        method: "POST",
+        body: JSON.stringify({ projectId, deploymentId: latestDeploy.uid, target: "production", meta: { trigger: "store-activation" } }),
+      })
+      console.log(`[deployStorefront] deployment triggered from ${latestDeploy.uid}`)
+    } else {
+      console.warn(`[deployStorefront] no previous deployment found to redeploy`)
+    }
+  } catch (err: any) {
+    console.error(`[deployStorefront] failed to trigger deployment:`, err.message)
+  }
+
   return {
-    url: `https://${domain}`,
+    url: `https://${customDomain || domain}`,
     rawToken,
     status: 'DEPLOYING',
   }

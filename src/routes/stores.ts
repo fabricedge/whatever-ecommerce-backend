@@ -2,6 +2,8 @@ import { Hono } from "hono"
 import { getPrisma } from "../lib/prisma.js"
 import { authMiddleware, adminMiddleware, getUser } from "../lib/auth-middleware.js"
 import { checkDeployment, buildStoreUrl } from "../lib/deployment.js"
+import { logAudit } from "../lib/audit-log.js"
+
 
 const stores = new Hono()
 
@@ -102,6 +104,12 @@ stores.post("/", authMiddleware, adminMiddleware, async (c) => {
     data: { userId: user.userId, storeId: store.id },
   })
 
+  await logAudit(c, "store.create", "Store", store.id, {
+    storeName: store.name,
+    storeSlug: store.slug,
+    description: `Loja "${store.name}" criada`,
+  })
+
   return c.json(store, 201)
 })
 
@@ -124,11 +132,22 @@ stores.put("/:id", authMiddleware, async (c) => {
   const data: Record<string, any> = {}
   if (body.name !== undefined) data.name = body.name
   if (body.isActive !== undefined) data.isActive = body.isActive
+  if (body.deploymentUrl !== undefined) data.deploymentUrl = body.deploymentUrl
+  if (body.domain !== undefined) data.domain = body.domain
 
   const updated = await getPrisma().store.update({
     where: { id },
     data,
   })
+
+  if (user.role === "SUPER_ADMIN" && (body.isActive !== undefined || body.name !== undefined)) {
+    await logAudit(c, "store.update", "Store", id, {
+      changes: data,
+      description: body.isActive !== undefined
+        ? `Loja "${store.name}" ${body.isActive ? "ativada" : "desativada"}`
+        : `Loja "${store.name}" atualizada`,
+    })
+  }
 
   return c.json(updated)
 })
@@ -165,6 +184,12 @@ stores.put("/:id/domain", authMiddleware, async (c) => {
   const updated = await getPrisma().store.update({
     where: { id },
     data: { domain },
+  })
+
+  await logAudit(c, "store.domain.update", "Store", id, {
+    before: { domain: store.domain },
+    after: { domain: updated.domain },
+    description: `Domínio alterado de "${store.domain || "nenhum"}" para "${updated.domain || "nenhum"}"`,
   })
 
   return c.json(updated)

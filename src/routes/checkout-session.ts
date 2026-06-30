@@ -3,11 +3,19 @@ import { Context } from "hono"
 import { getPrisma } from "../lib/prisma.js"
 import { getStripe } from "../lib/stripe.js"
 import { verifyToken } from "../lib/jwt.js"
+import { isConfigured } from "../lib/easyship.js"
 
 const checkoutSession = new Hono()
 
 function getStoreId(c: Context): string {
   return c.get("storeId")!
+}
+
+async function getOriginCountry(storeId: string): Promise<string> {
+  const setting = await getPrisma().setting.findUnique({
+    where: { storeId_key: { storeId, key: "origin_country" } },
+  })
+  return setting?.value || "US"
 }
 
 checkoutSession.post("/", async (c) => {
@@ -16,6 +24,28 @@ checkoutSession.post("/", async (c) => {
 
   let email: string | undefined
   let items: { productId: string; quantity: number }[] | undefined
+
+  const shippingInfo = {
+    shippingZip: body.shippingZip || "",
+    shippingAmount: body.shippingAmount ? Math.round(body.shippingAmount) : 0,
+    courierServiceId: body.courierServiceId || "",
+    carrier: body.carrier || "",
+    serviceLevel: body.serviceLevel || "",
+    shippingCountry: body.shippingCountry || "",
+    shippingName: body.shippingName || "",
+    shippingAddress: body.shippingAddress || "",
+    shippingCity: body.shippingCity || "",
+    shippingState: body.shippingState || "",
+    shippingPhone: body.shippingPhone || "",
+  }
+
+  if (shippingInfo.courierServiceId || shippingInfo.shippingZip) {
+    const configured = await isConfigured(storeId)
+    const originCountry = await getOriginCountry(storeId)
+    if (configured && shippingInfo.shippingCountry.toUpperCase() !== originCountry.toUpperCase()) {
+      return c.json({ error: `EasyShip só suporta entregas domésticas em ${originCountry} por enquanto` }, 400)
+    }
+  }
 
   const authHeader = c.req.header("Authorization")
   let tokenUser: { userId: string; role: string; email: string } | null = null
@@ -74,12 +104,24 @@ checkoutSession.post("/", async (c) => {
     return sum + product.price * item.quantity
   }, 0)
 
+  const orderTotal = total + shippingInfo.shippingAmount
+
   const order = await getPrisma().order.create({
     data: {
       userId: user.id,
       storeId,
-      total,
+      total: orderTotal,
       status: "PENDING",
+      shippingZip: shippingInfo.shippingZip || null,
+      shippingPrice: shippingInfo.shippingAmount || null,
+      carrier: shippingInfo.carrier || null,
+      serviceLevel: shippingInfo.serviceLevel || null,
+      shippingCountry: shippingInfo.shippingCountry || null,
+      shippingName: shippingInfo.shippingName || null,
+      shippingAddress: shippingInfo.shippingAddress || null,
+      shippingCity: shippingInfo.shippingCity || null,
+      shippingState: shippingInfo.shippingState || null,
+      shippingPhone: shippingInfo.shippingPhone || null,
     },
   })
 
@@ -93,39 +135,45 @@ checkoutSession.post("/", async (c) => {
   })
 
   const store = await getPrisma().store.findUnique({ where: { id: storeId } })
-  let applicationFeeAmount = 0
-  if (store?.stripeConnectAccountId && store?.connectOnboardingComplete) {
-    applicationFeeAmount = Math.round(total * 0.02) + 50
-  }
 
   let session
   try {
     const origin = c.req.header("Origin") || "http://localhost:5173"
+    const lineItems: any[] = items.map((item) => {
+      const product = productMap.get(item.productId)!
+      return {
+        price_data: {
+          currency: "brl",
+          product_data: { name: product.name },
+          unit_amount: product.price,
+        },
+        quantity: item.quantity,
+      }
+    })
+
+    if (shippingInfo.shippingAmount > 0) {
+      lineItems.push({
+        price_data: {
+          currency: "brl",
+          product_data: { name: `Frete (${shippingInfo.carrier}${shippingInfo.serviceLevel ? ` - ${shippingInfo.serviceLevel}` : ""})` },
+          unit_amount: shippingInfo.shippingAmount,
+        },
+        quantity: 1,
+      })
+    }
+
     const sessionParams: any = {
       mode: "payment",
-      line_items: items.map((item) => {
-        const product = productMap.get(item.productId)!
-        return {
-          price_data: {
-            currency: "brl",
-            product_data: { name: product.name },
-            unit_amount: product.price,
-          },
-          quantity: item.quantity,
-        }
-      }),
+      line_items: lineItems,
       customer_email: email,
-      metadata: { orderId: order.id },
+      metadata: {
+        orderId: order.id,
+        ...(shippingInfo.courierServiceId ? { courierServiceId: shippingInfo.courierServiceId } : {}),
+      },
       shipping_address_collection: { allowed_countries: ["BR", "US", "DE", "FR", "GB", "PT", "ES", "IT", "AR", "CL", "CO", "MX", "PY", "UY"] },
       phone_number_collection: { enabled: true },
       success_url: `${origin}/account/orders?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/checkout`,
-    }
-    if (applicationFeeAmount > 0) {
-      sessionParams.payment_intent_data = {
-        application_fee_amount: applicationFeeAmount,
-        transfer_data: { destination: store!.stripeConnectAccountId! },
-      }
     }
     session = await getStripe().checkout.sessions.create(sessionParams)
   } catch {

@@ -7,23 +7,41 @@ datasource db {
 }
 
 model Product {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   name        String
-  slug        String   @unique
+  slug        String    @unique
   sku         String?
   description String
   price       Int
   images      String[]
-  category    String?
-  inventory   Int      @default(0)
+  categoryId  String?
+  tags        String[]
+  inventory   Int       @default(0)
+  weight      Float?
+  length      Float?
+  width       Float?
+  height      Float?
   storeId     String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   store       Store       @relation(fields: [storeId], references: [id])
+  categoryRel Category?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   cartItems   CartItem[]
   orderItems  OrderItem[]
   imageRecords Image[]
+}
+
+model Category {
+  id        String    @id @default(cuid())
+  name      String
+  storeId   String
+  store     Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  products  Product[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([name, storeId])
 }
 
 model User {
@@ -41,6 +59,7 @@ model User {
   sessions      Session[]
   orders        Order[]
   cartItems     CartItem[]
+  auditLogs     AuditLog[]
 }
 
 enum Role {
@@ -60,15 +79,15 @@ model Store {
   deploymentUrl             String?
   deploymentToken           String?
   deploymentStatus          String?
-  stripeConnectAccountId    String?
-  connectOnboardingComplete Boolean            @default(false)
   createdAt                 DateTime           @default(now())
 
   products      Product[]
+  categories    Category[]
   orders        Order[]
   settings      Setting[]
   users         UserStore[]
   storeRequests StoreRequest[]
+  pages         Page[]
 }
 
 model UserStore {
@@ -192,6 +211,11 @@ model Setting {
   @@unique([storeId, key])
 }
 
+model PlatformSetting {
+  key   String @id
+  value String
+}
+
 model Image {
   id        String   @id @default(cuid())
   productId String?
@@ -220,6 +244,21 @@ model OrderItem {
   product Product @relation(fields: [productId], references: [id])
 }
 
+model Page {
+  id        String   @id @default(cuid())
+  storeId   String
+  slug      String
+  title     String
+  content   String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, slug])
+}
+
 model StoreRequest {
   id                        String             @id @default(cuid())
   storeName                 String
@@ -235,9 +274,6 @@ model StoreRequest {
   store                     Store?             @relation(fields: [storeId], references: [id], onDelete: SetNull)
   setupFeePaid              Boolean            @default(false)
   setupFeePaymentIntentId   String?
-  stripeConnectAccountId    String?
-  connectOnboardingComplete Boolean            @default(false)
-  connectOnboardingUrl      String?
   createdAt                 DateTime           @default(now())
   updatedAt                 DateTime           @updatedAt
 }
@@ -253,6 +289,18 @@ enum StorePlan {
   FREE
   MONTHLY
   CUSTOM
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  action     String
+  entityType String
+  entityId   String?
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
 }
 
 enum StorefrontType {
