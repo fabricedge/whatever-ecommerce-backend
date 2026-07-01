@@ -81,29 +81,43 @@ products.get("/:id", async (c) => {
 products.post("/", authMiddleware, adminMiddleware, async (c) => {
   const storeId = getStoreId(c)
   const body = await c.req.json()
+
+  if (!body.name || typeof body.name !== "string" || !body.name.trim()) {
+    return c.json({ error: "Nome do produto é obrigatório" }, 400)
+  }
+  if (body.price == null || isNaN(Number(body.price))) {
+    return c.json({ error: "Preço é obrigatório" }, 400)
+  }
+
   const slug = body.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
 
-  const product = await getPrisma().product.create({
-    data: {
-      name: body.name,
-      slug,
-      sku: body.sku || null,
-      description: body.description || "",
-      price: Math.round(body.price * 100),
-      images: body.images || [],
-      categoryId: body.categoryId || null,
-      tags: Array.isArray(body.tags) ? body.tags : [],
-      inventory: body.inventory ?? 0,
-      weight: body.weight != null ? parseFloat(body.weight) : null,
-      length: body.length != null ? parseFloat(body.length) : null,
-      width: body.width != null ? parseFloat(body.width) : null,
-      height: body.height != null ? parseFloat(body.height) : null,
-      storeId,
-    },
-    include: includeCategory(),
-  })
-
-  return c.json(product, 201)
+  try {
+    const product = await getPrisma().product.create({
+      data: {
+        name: body.name.trim(),
+        slug,
+        sku: body.sku || null,
+        description: body.description || "",
+        price: Math.round(Number(body.price) * 100),
+        images: body.images || [],
+        categoryId: body.categoryId || null,
+        tags: Array.isArray(body.tags) ? body.tags : [],
+        inventory: typeof body.inventory === "number" ? body.inventory : 0,
+        weight: body.weight != null ? Number(body.weight) : null,
+        length: body.length != null ? Number(body.length) : null,
+        width: body.width != null ? Number(body.width) : null,
+        height: body.height != null ? Number(body.height) : null,
+        storeId,
+      },
+      include: includeCategory(),
+    })
+    return c.json(product, 201)
+  } catch (err: any) {
+    if (err?.code === "P2002") {
+      return c.json({ error: "Já existe um produto com este nome" }, 409)
+    }
+    throw err
+  }
 })
 
 products.post("/import", authMiddleware, adminMiddleware, async (c) => {
